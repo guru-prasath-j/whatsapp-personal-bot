@@ -130,4 +130,4 @@ client.on('disconnected', (reason) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-console.log('\n🚀 Starting WhatsApp Personal Bot..
+console.log('\nStarting WhatsApp Personal Bot...');
