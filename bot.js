@@ -25,6 +25,7 @@ const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'whatsapp-brain' }),
     puppeteer: {
         headless: true,
+        executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -129,6 +130,4 @@ client.on('disconnected', (reason) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-console.log('\n🚀 Starting WhatsApp Personal Bot...');
-console.log('Make sure Ollama is running: ollama serve\n');
-client.initialize();
+console.log('\n🚀 Starting WhatsApp Personal Bot..
