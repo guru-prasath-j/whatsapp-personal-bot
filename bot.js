@@ -7,6 +7,8 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { getAIResponse } = require('./rag');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -20,9 +22,28 @@ const ALLOWED_NUMS  = process.env.ALLOWED_NUMBERS
 // Track processed message IDs to avoid duplicates
 const processedMessages = new Set();
 
-// Per-sender conversation history (last 10 exchanges)
-const conversationHistory = new Map();
-const MAX_HISTORY = 10;
+// Per-sender conversation history — persisted to disk so restarts don't lose context
+const HISTORY_FILE = path.join(__dirname, 'conversation_history.json');
+const MAX_HISTORY = 20;
+
+function loadHistory() {
+    try {
+        if (fs.existsSync(HISTORY_FILE)) {
+            const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+            return new Map(Object.entries(data));
+        }
+    } catch (e) { /* ignore corrupt file */ }
+    return new Map();
+}
+
+function saveHistory(map) {
+    try {
+        fs.writeFileSync(HISTORY_FILE, JSON.stringify(Object.fromEntries(map)), 'utf8');
+    } catch (e) { console.error('[History] Failed to save:', e.message); }
+}
+
+const conversationHistory = loadHistory();
+console.log(`[History] Loaded history for ${conversationHistory.size} contact(s)`);
 
 function getHistory(sender) {
     if (!conversationHistory.has(sender)) conversationHistory.set(sender, []);
@@ -32,8 +53,8 @@ function getHistory(sender) {
 function addToHistory(sender, role, content) {
     const history = getHistory(sender);
     history.push({ role, content });
-    // Keep only last MAX_HISTORY messages
     if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+    saveHistory(conversationHistory);
 }
 
 // ── WhatsApp Client ───────────────────────────────────────────────────────────
