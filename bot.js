@@ -117,8 +117,16 @@ client.on('message', async (message) => {
         // Skip status updates
         if (message.isStatus) return;
 
-        // Skip messages from yourself
-        if (IGNORE_SELF && message.fromMe) return;
+        // Store your own manual replies as 'assistant' context (but don't auto-reply)
+        if (message.fromMe) {
+            const contactNumber = message.to.replace('@c.us', '').replace('@lid', '');
+            const text = message.body?.trim();
+            if (text && !message.from.endsWith('@g.us')) {
+                addToHistory(contactNumber, 'assistant', text);
+                console.log(`[History] Saved your reply to ${contactNumber}`);
+            }
+            return;
+        }
 
         // Skip group messages (optional — remove this to handle groups too)
         if (message.from.endsWith('@g.us')) {
@@ -127,7 +135,7 @@ client.on('message', async (message) => {
         }
 
         // Check allowed numbers filter
-        const senderNumber = message.from.replace('@c.us', '');
+        const senderNumber = message.from.replace(/@c\.us$|@lid$/, '');
         if (ALLOWED_NUMS.length > 0 && !ALLOWED_NUMS.includes(senderNumber)) {
             console.log(`[Skip] ${senderNumber} not in allowed list`);
             return;
