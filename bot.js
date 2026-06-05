@@ -33,8 +33,22 @@ const MAX_HISTORY  = 20;
  */
 function loadHistory() {
     try {
-        if (fs.existsSync(HISTORY_FILE))
-            return new Map(Object.entries(JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))));
+        if (fs.existsSync(HISTORY_FILE)) {
+            const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+            const map = new Map();
+            for (const [sender, value] of Object.entries(raw)) {
+                // Migrate old format: plain array → new shape
+                if (Array.isArray(value)) {
+                    map.set(sender, {
+                        messages: value.map(m => ({ ...m, ts: m.ts || Date.now() })),
+                        lastActivity: Date.now()
+                    });
+                } else {
+                    map.set(sender, value);
+                }
+            }
+            return map;
+        }
     } catch { /* ignore corrupt file */ }
     return new Map();
 }
@@ -92,41 +106,116 @@ function isPaused(sender) {
 const processedMessages = new Set();
 
 // ── Media helpers ─────────────────────────────────────────────────────────────
+
+// Lazy-load optional packages
+function tryRequire(pkg) {
+    try { return require(pkg); } catch { return null; }
+}
+
 /**
- * Download media and convert to base64 data URI for Ollama vision,
- * or extract text description for non-image media.
+ * Ask Ollama vision model to describe an image (base64).
+ * Falls back gracefully if no vision model is available.
+ */
+async function describeImageWithVision(base64Data, mime) {
+    const VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision';
+    try {
+        const resp = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
+            model: VISION_MODEL,
+            messages: [{
+                role: 'user',
+                content: 'Describe this image in detail. What does it show? If it contains text, extract it.',
+                images: [base64Data]
+            }],
+            stream: false
+        }, { timeout: 60000 });
+        const description = resp.data.message?.content || '';
+        console.log('[Vision] Image described via', VISION_MODEL);
+        return `[Customer sent an image. Contents: ${description}]`;
+    } catch (e) {
+        console.warn('[Vision] Vision model unavailable:', e.message);
+        return `[Customer sent an image (${mime}) but vision model is not available. Ask them to describe it in text.]`;
+    }
+}
+
+/**
+ * Extract text from PDF buffer using pdf-parse.
+ */
+async function extractPdfText(buffer) {
+    const pdfParse = tryRequire('pdf-parse');
+    if (!pdfParse) return null;
+    try {
+        const data = await pdfParse(buffer);
+        return data.text?.trim().substring(0, 3000) || null; // cap at 3000 chars
+    } catch (e) {
+        console.warn('[PDF] Extraction failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Extract text from Word doc buffer using mammoth.
+ */
+async function extractDocxText(buffer) {
+    const mammoth = tryRequire('mammoth');
+    if (!mammoth) return null;
+    try {
+        const result = await mammoth.extractRawText({ buffer });
+        return result.value?.trim().substring(0, 3000) || null;
+    } catch (e) {
+        console.warn('[DOCX] Extraction failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Download media and return a text prompt describing or containing its content.
  */
 async function describeMedia(message) {
     try {
         const media = await message.downloadMedia();
         if (!media) return null;
 
-        const mime = media.mimetype || '';
+        const mime  = media.mimetype || '';
+        const buf   = Buffer.from(media.data, 'base64');
 
-        // Images — send to Ollama vision (llava or llama3.2-vision if available, else describe)
+        // ── Images: use vision model ──────────────────────────────────────────
         if (mime.startsWith('image/')) {
-            return `[Customer sent an image. MIME: ${mime}. Describe it as best you can and respond helpfully. Image data is attached.]`;
-            // Note: full vision support requires a vision model; flag for now
+            return await describeImageWithVision(media.data, mime);
         }
 
-        // PDF / Word / text docs
-        if (mime.includes('pdf') || mime.includes('word') || mime.includes('document') || mime.includes('text')) {
-            return `[Customer sent a document (${mime}). Let them know you received it and ask them to describe what they need help with, as you can't read attachments directly yet.]`;
+        // ── PDFs ──────────────────────────────────────────────────────────────
+        if (mime.includes('pdf')) {
+            const text = await extractPdfText(buf);
+            if (text) return `[Customer sent a PDF. Contents:\n${text}\n\nAnswer their question based on this document.]`;
+            return `[Customer sent a PDF but text extraction failed. Ask them to paste the relevant text.]`;
         }
 
-        // Audio
+        // ── Word docs ─────────────────────────────────────────────────────────
+        if (mime.includes('word') || mime.includes('officedocument.wordprocessingml')) {
+            const text = await extractDocxText(buf);
+            if (text) return `[Customer sent a Word document. Contents:\n${text}\n\nAnswer their question based on this document.]`;
+            return `[Customer sent a Word doc but extraction failed. Ask them to paste the relevant text.]`;
+        }
+
+        // ── Plain text ────────────────────────────────────────────────────────
+        if (mime.startsWith('text/')) {
+            const text = buf.toString('utf8').substring(0, 3000);
+            return `[Customer sent a text file. Contents:\n${text}]`;
+        }
+
+        // ── Audio ─────────────────────────────────────────────────────────────
         if (mime.startsWith('audio/')) {
-            return `[Customer sent a voice message or audio file. Let them know you can't process audio yet and ask them to type their question.]`;
+            return `[Customer sent a voice/audio message. Let them know you can't process audio yet and ask them to type their question.]`;
         }
 
-        // Video
+        // ── Video ─────────────────────────────────────────────────────────────
         if (mime.startsWith('video/')) {
-            return `[Customer sent a video. Acknowledge it and ask them to describe what they need.]`;
+            return `[Customer sent a video. Acknowledge and ask them to describe what they need.]`;
         }
 
         return `[Customer sent a file (${mime}). Acknowledge receipt and ask how you can help.]`;
     } catch (e) {
-        console.error('[Media] Download failed:', e.message);
+        console.error('[Media] Failed:', e.message);
         return null;
     }
 }
