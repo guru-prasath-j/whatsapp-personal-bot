@@ -20,6 +20,22 @@ const ALLOWED_NUMS  = process.env.ALLOWED_NUMBERS
 // Track processed message IDs to avoid duplicates
 const processedMessages = new Set();
 
+// Per-sender conversation history (last 10 exchanges)
+const conversationHistory = new Map();
+const MAX_HISTORY = 10;
+
+function getHistory(sender) {
+    if (!conversationHistory.has(sender)) conversationHistory.set(sender, []);
+    return conversationHistory.get(sender);
+}
+
+function addToHistory(sender, role, content) {
+    const history = getHistory(sender);
+    history.push({ role, content });
+    // Keep only last MAX_HISTORY messages
+    if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+}
+
 // ── WhatsApp Client ───────────────────────────────────────────────────────────
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'whatsapp-brain' }),
@@ -101,6 +117,9 @@ client.on('message', async (message) => {
 
         console.log(`[MSG] From ${senderNumber}: ${text}`);
 
+        // Add user message to history
+        addToHistory(senderNumber, 'user', text);
+
         // Show typing indicator
         const chat = await message.getChat();
         await chat.sendStateTyping();
@@ -108,8 +127,11 @@ client.on('message', async (message) => {
         // Add human-like delay
         await new Promise(r => setTimeout(r, TYPING_DELAY));
 
-        // Get AI response
-        const reply = await getAIResponse(text);
+        // Get AI response with conversation history
+        const reply = await getAIResponse(text, getHistory(senderNumber));
+
+        // Add assistant reply to history
+        addToHistory(senderNumber, 'assistant', reply);
 
         // Stop typing indicator
         await chat.clearState();
@@ -131,3 +153,23 @@ client.on('disconnected', (reason) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 console.log('\nStarting WhatsApp Personal Bot...');
+
+// Warm up Ollama so the model is loaded before the first real message
+(async () => {
+    try {
+        const axios = require('axios');
+        const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+        const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+        console.log(`[Warmup] Loading ${OLLAMA_MODEL} into memory...`);
+        await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
+            model: OLLAMA_MODEL,
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: false
+        }, { timeout: 120000 });
+        console.log('[Warmup] Ollama model ready ✅');
+    } catch (e) {
+        console.log('[Warmup] Could not pre-load model:', e.message);
+    }
+})();
+
+client.initialize();
