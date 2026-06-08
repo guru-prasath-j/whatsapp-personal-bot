@@ -4,17 +4,17 @@ import StatusBar from './components/StatusBar.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import ChatView from './components/ChatView.jsx'
 import EmptyState from './components/EmptyState.jsx'
+import ProfilePanel from './components/ProfilePanel.jsx'
 
 function App() {
-  const socketRef = useRef(null)
-  const [connected, setConnected]       = useState(false)
-  const [botStatus, setBotStatus]       = useState('connecting')
-  const [globalPaused, setGlobalPaused] = useState(false)
-  const [pending, setPending]           = useState([])
-  const [conversations, setConversations] = useState({}) // { contactId: messages[] }
-  const [selectedId, setSelectedId]     = useState(null)
-  const [sending, setSending]           = useState(false)
-  const [toasts, setToasts]             = useState([])
+  const socketRef                         = useRef(null)
+  const [connected, setConnected]         = useState(false)
+  const [botStatus, setBotStatus]         = useState('connecting')
+  const [globalPaused, setGlobalPaused]   = useState(false)
+  const [conversations, setConversations] = useState([])
+  const [selectedId, setSelectedId]       = useState(null)
+  const [showProfile, setShowProfile]     = useState(false)
+  const [toasts, setToasts]               = useState([])
 
   const addToast = useCallback((message, type = 'success') => {
     const id = Date.now()
@@ -23,14 +23,7 @@ function App() {
   }, [])
 
   const fetchConversations = useCallback(() => {
-    fetch('/api/conversations')
-      .then(r => r.json())
-      .then(data => {
-        const map = {}
-        data.forEach(c => { map[c.id] = c.messages })
-        setConversations(map)
-      })
-      .catch(() => {})
+    fetch('/api/conversations').then(r => r.json()).then(setConversations).catch(() => {})
   }, [])
 
   useEffect(() => { fetchConversations() }, [fetchConversations])
@@ -38,91 +31,40 @@ function App() {
   useEffect(() => {
     const socket = io({ transports: ['websocket', 'polling'] })
     socketRef.current = socket
-
     socket.on('connect',    () => setConnected(true))
     socket.on('disconnect', () => setConnected(false))
-
-    socket.on('init_state', ({ status, globalPaused: gp, pending: p }) => {
-      setBotStatus(status)
-      setGlobalPaused(gp)
-      setPending(p || [])
-    })
-
-    socket.on('bot_status', ({ status }) => setBotStatus(status))
-
-    socket.on('new_pending', (msg) => {
-      setPending(prev => prev.find(m => m.id === msg.id) ? prev : [...prev, msg])
-      setSelectedId(msg.id)
-      fetchConversations()
-    })
-
-    socket.on('reply_sent', ({ messageId }) => {
-      setPending(prev => prev.filter(m => m.id !== messageId))
-      setSelectedId(prev => prev === messageId ? null : prev)
-      fetchConversations()
-    })
-
-    socket.on('message_dismissed', ({ messageId }) => {
-      setPending(prev => prev.filter(m => m.id !== messageId))
-      setSelectedId(prev => prev === messageId ? null : prev)
-    })
-
-    socket.on('suggestions_updated', ({ messageId, suggestions }) => {
-      setPending(prev => prev.map(m => m.id === messageId ? { ...m, suggestions } : m))
-    })
-
-    socket.on('pause_changed', ({ globalPaused: gp }) => setGlobalPaused(gp))
-
+    socket.on('init_state', ({ status, globalPaused: gp }) => { setBotStatus(status); setGlobalPaused(gp) })
+    socket.on('bot_status',           ({ status }) => setBotStatus(status))
+    socket.on('conversation_updated', () => fetchConversations())
+    socket.on('pause_changed',        ({ globalPaused: gp }) => setGlobalPaused(gp))
     return () => socket.disconnect()
   }, [fetchConversations])
 
-  const selectedMessage = pending.find(m => m.id === selectedId) || null
+  const selectedConv = conversations.find(c => c.id === selectedId) || null
+
+  const handleSelect = useCallback((id) => {
+    setSelectedId(id)
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c))
+  }, [])
 
   const handleSend = useCallback(async (text) => {
-    if (!selectedMessage || !text.trim() || sending) return
-    setSending(true)
+    if (!text.trim() || !selectedId) return
     try {
       const res = await fetch('/api/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messageId: selectedMessage.id,
-          text:      text.trim(),
-          to:        selectedMessage.chatId
-        })
+        body: JSON.stringify({ text: text.trim(), to: selectedId })
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Send failed')
-      addToast(`Replied to ${selectedMessage.name}`)
-    } catch (e) {
-      addToast(e.message, 'error')
-    } finally {
-      setSending(false)
-    }
-  }, [selectedMessage, sending, addToast])
-
-  const handleDismiss = useCallback(async (id) => {
-    await fetch('/api/dismiss', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId: id })
-    })
-  }, [])
-
-  const handleRegenerate = useCallback(async (id) => {
-    await fetch('/api/regenerate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId: id })
-    })
-  }, [])
+      fetchConversations()
+      addToast(`Replied to ${selectedConv?.name || selectedId}`)
+    } catch (e) { addToast(e.message, 'error') }
+  }, [selectedId, selectedConv, fetchConversations, addToast])
 
   const handleGlobalPause = useCallback(async () => {
     const endpoint = globalPaused ? '/api/play' : '/api/pause'
-    await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target: 'all' })
-    })
+    await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: 'all' }) })
     setGlobalPaused(p => !p)
   }, [globalPaused])
 
@@ -131,40 +73,28 @@ function App() {
       <StatusBar
         botStatus={botStatus}
         connected={connected}
-        pendingCount={pending.length}
         globalPaused={globalPaused}
         onTogglePause={handleGlobalPause}
+        onOpenProfile={() => setShowProfile(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          pending={pending}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-        />
-
+        <Sidebar conversations={conversations} selectedId={selectedId} onSelect={handleSelect} />
         <main className="flex-1 overflow-hidden">
-          {selectedMessage ? (
-            <ChatView
-              message={selectedMessage}
-              history={conversations[selectedMessage.from] || []}
-              onSend={handleSend}
-              onDismiss={handleDismiss}
-              onRegenerate={handleRegenerate}
-              sending={sending}
-            />
-          ) : (
-            <EmptyState pendingCount={pending.length} />
-          )}
+          {selectedConv
+            ? <ChatView conversation={selectedConv} onSend={handleSend} />
+            : <EmptyState />}
         </main>
       </div>
 
+      {/* Profile panel */}
+      {showProfile && <ProfilePanel onClose={() => setShowProfile(false)} />}
+
+      {/* Toasts */}
       <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-50">
         {toasts.map(t => (
-          <div key={t.id} className={`
-            px-4 py-3 rounded-xl text-sm font-medium shadow-xl animate-slide-in
-            ${t.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-wa-green text-white'}
-          `}>
+          <div key={t.id} className={`px-4 py-3 rounded-xl text-sm font-medium shadow-xl animate-slide-in
+            ${t.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-wa-green text-white'}`}>
             {t.message}
           </div>
         ))}
