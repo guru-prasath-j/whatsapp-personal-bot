@@ -1,18 +1,23 @@
 {
   "name": "whatsapp-personal-bot",
   "version": "1.0.0",
-  "description": "WhatsApp personal number AI bot using RAG + Ollama",
+  "description": "WhatsApp personal number AI bot with suggestion dashboard",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon bot.js"
+    "dev": "nodemon bot.js",
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "setup": "npm install && npm run build:frontend"
   },
   "dependencies": {
     "axios": "^1.6.0",
+    "cors": "^2.8.6",
     "dotenv": "^16.3.1",
+    "express": "^4.22.2",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
     "qrcode-terminal": "^0.12.0",
+    "socket.io": "^4.8.3",
     "whatsapp-web.js": "^1.23.0"
   },
   "devDependencies": {

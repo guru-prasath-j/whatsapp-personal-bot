@@ -1,43 +1,43 @@
 /**
- * WhatsApp Personal Bot
- * Features: RAG + Ollama AI, conversation history (persisted), history TTL,
- *           media handling (images/PDFs/docs), human takeover, bot pause/play commands
+ * WhatsApp Personal Bot — Dashboard Mode
+ * Instead of auto-replying, generates 3 AI suggestions and shows them in the web dashboard.
+ * User picks one (or types custom) and sends it from the dashboard.
  */
 
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode   = require('qrcode-terminal');
-const fs       = require('fs');
-const path     = require('path');
-const axios    = require('axios');
-const { getAIResponse } = require('./rag');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode    = require('qrcode-terminal');
+const fs        = require('fs');
+const path      = require('path');
+const axios     = require('axios');
+const express   = require('express');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const cors      = require('cors');
+const { getAIResponse, getSuggestions } = require('./rag');
 require('dotenv').config();
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const BOT_NAME        = process.env.BOT_NAME        || 'WhatsApp Brain';
-const TYPING_DELAY    = parseInt(process.env.TYPING_DELAY) || 2000;
+const TYPING_DELAY    = parseInt(process.env.TYPING_DELAY)    || 2000;
 const ALLOWED_NUMS    = process.env.ALLOWED_NUMBERS
     ? process.env.ALLOWED_NUMBERS.split(',').map(n => n.trim()).filter(Boolean)
     : [];
-const HISTORY_TTL_MS  = parseInt(process.env.HISTORY_TTL_HOURS  || '48')  * 60 * 60 * 1000;
-const TAKEOVER_TTL_MS = parseInt(process.env.TAKEOVER_MINUTES   || '30')  * 60 * 1000;
+const HISTORY_TTL_MS  = parseInt(process.env.HISTORY_TTL_HOURS  || '48') * 60 * 60 * 1000;
+const TAKEOVER_TTL_MS = parseInt(process.env.TAKEOVER_MINUTES   || '30') * 60 * 1000;
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const OLLAMA_MODEL    = process.env.OLLAMA_MODEL    || 'llama3.2';
+const DASHBOARD_PORT  = parseInt(process.env.DASHBOARD_PORT)   || 3001;
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 const HISTORY_FILE = path.join(__dirname, 'conversation_history.json');
 const MAX_HISTORY  = 20;
 
-/**
- * Stored shape per contact:
- * { messages: [{role, content, ts}], lastActivity: <timestamp> }
- */
 function loadHistory() {
     try {
         if (fs.existsSync(HISTORY_FILE)) {
             const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
             const map = new Map();
             for (const [sender, value] of Object.entries(raw)) {
-                // Migrate old format: plain array → new shape
                 if (Array.isArray(value)) {
                     map.set(sender, {
                         messages: value.map(m => ({ ...m, ts: m.ts || Date.now() })),
@@ -70,10 +70,9 @@ function getRecord(sender) {
 
 function getHistory(sender) {
     const rec = getRecord(sender);
-    // Prune stale history older than TTL
     const cutoff = Date.now() - HISTORY_TTL_MS;
     if (rec.lastActivity < cutoff) {
-        console.log(`[History] Expired history for ${sender} (inactive > ${HISTORY_TTL_MS / 3600000}h)`);
+        console.log(`[History] Expired history for ${sender}`);
         rec.messages = [];
     }
     return rec.messages.map(m => ({ role: m.role, content: m.content }));
@@ -89,9 +88,7 @@ function addToHistory(sender, role, content) {
 }
 
 // ── Pause / Takeover state ────────────────────────────────────────────────────
-// pausedContacts: Map<senderNumber, expiresAt>  — bot won't auto-reply until expiry
 const pausedContacts = new Map();
-// Global pause — !pause all / !play all
 let globalPaused = false;
 
 function isPaused(sender) {
@@ -105,17 +102,154 @@ function isPaused(sender) {
 // ── Dedup ─────────────────────────────────────────────────────────────────────
 const processedMessages = new Set();
 
+// ── Dashboard state ───────────────────────────────────────────────────────────
+const pendingMessages = new Map();   // id → pending message object
+const recentApiReplies = new Map();  // text → timestamp (to avoid double-storing in history)
+let botStatus = 'initializing';
+
+// ── Express + Socket.io ───────────────────────────────────────────────────────
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+    cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+app.use(cors());
+app.use(express.json());
+
+// Serve built frontend in production
+const FRONTEND_DIST = path.join(__dirname, 'frontend', 'dist');
+if (fs.existsSync(FRONTEND_DIST)) {
+    app.use(express.static(FRONTEND_DIST));
+    console.log('[Dashboard] Serving frontend from', FRONTEND_DIST);
+}
+
+// ── REST API ──────────────────────────────────────────────────────────────────
+
+app.get('/api/status', (req, res) => {
+    res.json({
+        status: botStatus,
+        pendingCount: pendingMessages.size,
+        globalPaused,
+        historyCount: conversationHistory.size
+    });
+});
+
+app.get('/api/pending', (req, res) => {
+    res.json([...pendingMessages.values()].sort((a, b) => a.ts - b.ts));
+});
+
+app.get('/api/conversations', (req, res) => {
+    const conversations = [];
+    for (const [sender, record] of conversationHistory) {
+        conversations.push({
+            id: sender,
+            messages: record.messages,
+            lastActivity: record.lastActivity,
+            isPaused: isPaused(sender)
+        });
+    }
+    res.json(conversations.sort((a, b) => b.lastActivity - a.lastActivity));
+});
+
+app.post('/api/reply', async (req, res) => {
+    const { messageId, text, to } = req.body;
+    if (!text || !to) return res.status(400).json({ error: 'Missing text or to' });
+
+    try {
+        const chatId = to.includes('@') ? to : `${to}@c.us`;
+        const chat = await client.getChatById(chatId);
+        await chat.sendMessage(text);
+
+        const senderNum = to.replace(/@c\.us$/, '');
+        addToHistory(senderNum, 'assistant', text);
+
+        // Mark as API-sent to avoid double-storing in message_create handler
+        recentApiReplies.set(text, Date.now());
+        setTimeout(() => recentApiReplies.delete(text), 5000);
+
+        if (messageId) pendingMessages.delete(messageId);
+
+        io.emit('reply_sent', { messageId, to, text, ts: Date.now() });
+        console.log(`[API] Reply sent to ${to}: ${text.substring(0, 60)}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[API Reply Error]', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/dismiss', (req, res) => {
+    const { messageId } = req.body;
+    if (messageId) {
+        pendingMessages.delete(messageId);
+        io.emit('message_dismissed', { messageId });
+    }
+    res.json({ success: true });
+});
+
+app.post('/api/regenerate', async (req, res) => {
+    const { messageId } = req.body;
+    const pending = pendingMessages.get(messageId);
+    if (!pending) return res.status(404).json({ error: 'Message not found' });
+
+    try {
+        const suggestions = await getSuggestions(pending.text, getHistory(pending.from));
+        pending.suggestions = suggestions;
+        io.emit('suggestions_updated', { messageId, suggestions });
+        res.json({ success: true, suggestions });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/pause', (req, res) => {
+    const { target } = req.body;
+    if (target === 'all') {
+        globalPaused = true;
+    } else if (target) {
+        pausedContacts.set(target, Date.now() + TAKEOVER_TTL_MS);
+    }
+    io.emit('pause_changed', { target, paused: true, globalPaused });
+    res.json({ success: true });
+});
+
+app.post('/api/play', (req, res) => {
+    const { target } = req.body;
+    if (target === 'all') {
+        globalPaused = false;
+        pausedContacts.clear();
+    } else if (target) {
+        pausedContacts.delete(target);
+    }
+    io.emit('pause_changed', { target, paused: false, globalPaused });
+    res.json({ success: true });
+});
+
+// Catch-all: serve React SPA for non-API routes in production
+if (fs.existsSync(FRONTEND_DIST)) {
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+    });
+}
+
+// ── Socket.io ─────────────────────────────────────────────────────────────────
+io.on('connection', (socket) => {
+    console.log('[Dashboard] Browser connected');
+    socket.emit('init_state', {
+        status: botStatus,
+        globalPaused,
+        pending: [...pendingMessages.values()]
+    });
+    socket.on('disconnect', () => console.log('[Dashboard] Browser disconnected'));
+});
+
 // ── Media helpers ─────────────────────────────────────────────────────────────
 
-// Lazy-load optional packages
 function tryRequire(pkg) {
     try { return require(pkg); } catch { return null; }
 }
 
-/**
- * Ask Ollama vision model to describe an image (base64).
- * Falls back gracefully if no vision model is available.
- */
 async function describeImageWithVision(base64Data, mime) {
     const VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision';
     try {
@@ -129,32 +263,25 @@ async function describeImageWithVision(base64Data, mime) {
             stream: false
         }, { timeout: 60000 });
         const description = resp.data.message?.content || '';
-        console.log('[Vision] Image described via', VISION_MODEL);
         return `[Customer sent an image. Contents: ${description}]`;
     } catch (e) {
         console.warn('[Vision] Vision model unavailable:', e.message);
-        return `[Customer sent an image (${mime}) but vision model is not available. Ask them to describe it in text.]`;
+        return `[Customer sent an image (${mime}) but vision model is not available.]`;
     }
 }
 
-/**
- * Extract text from PDF buffer using pdf-parse.
- */
 async function extractPdfText(buffer) {
     const pdfParse = tryRequire('pdf-parse');
     if (!pdfParse) return null;
     try {
         const data = await pdfParse(buffer);
-        return data.text?.trim().substring(0, 3000) || null; // cap at 3000 chars
+        return data.text?.trim().substring(0, 3000) || null;
     } catch (e) {
         console.warn('[PDF] Extraction failed:', e.message);
         return null;
     }
 }
 
-/**
- * Extract text from Word doc buffer using mammoth.
- */
 async function extractDocxText(buffer) {
     const mammoth = tryRequire('mammoth');
     if (!mammoth) return null;
@@ -167,53 +294,36 @@ async function extractDocxText(buffer) {
     }
 }
 
-/**
- * Download media and return a text prompt describing or containing its content.
- */
 async function describeMedia(message) {
     try {
         const media = await message.downloadMedia();
         if (!media) return null;
 
-        const mime  = media.mimetype || '';
-        const buf   = Buffer.from(media.data, 'base64');
+        const mime = media.mimetype || '';
+        const buf  = Buffer.from(media.data, 'base64');
 
-        // ── Images: use vision model ──────────────────────────────────────────
-        if (mime.startsWith('image/')) {
+        if (mime.startsWith('image/'))
             return await describeImageWithVision(media.data, mime);
-        }
-
-        // ── PDFs ──────────────────────────────────────────────────────────────
         if (mime.includes('pdf')) {
             const text = await extractPdfText(buf);
-            if (text) return `[Customer sent a PDF. Contents:\n${text}\n\nAnswer their question based on this document.]`;
-            return `[Customer sent a PDF but text extraction failed. Ask them to paste the relevant text.]`;
+            return text
+                ? `[Customer sent a PDF. Contents:\n${text}\n\nAnswer their question based on this document.]`
+                : `[Customer sent a PDF but text extraction failed.]`;
         }
-
-        // ── Word docs ─────────────────────────────────────────────────────────
         if (mime.includes('word') || mime.includes('officedocument.wordprocessingml')) {
             const text = await extractDocxText(buf);
-            if (text) return `[Customer sent a Word document. Contents:\n${text}\n\nAnswer their question based on this document.]`;
-            return `[Customer sent a Word doc but extraction failed. Ask them to paste the relevant text.]`;
+            return text
+                ? `[Customer sent a Word document. Contents:\n${text}]`
+                : `[Customer sent a Word doc but extraction failed.]`;
         }
-
-        // ── Plain text ────────────────────────────────────────────────────────
-        if (mime.startsWith('text/')) {
-            const text = buf.toString('utf8').substring(0, 3000);
-            return `[Customer sent a text file. Contents:\n${text}]`;
-        }
-
-        // ── Audio ─────────────────────────────────────────────────────────────
-        if (mime.startsWith('audio/')) {
-            return `[Customer sent a voice/audio message. Let them know you can't process audio yet and ask them to type their question.]`;
-        }
-
-        // ── Video ─────────────────────────────────────────────────────────────
-        if (mime.startsWith('video/')) {
+        if (mime.startsWith('text/'))
+            return `[Customer sent a text file. Contents:\n${buf.toString('utf8').substring(0, 3000)}]`;
+        if (mime.startsWith('audio/'))
+            return `[Customer sent a voice/audio message. Let them know you can't process audio yet.]`;
+        if (mime.startsWith('video/'))
             return `[Customer sent a video. Acknowledge and ask them to describe what they need.]`;
-        }
 
-        return `[Customer sent a file (${mime}). Acknowledge receipt and ask how you can help.]`;
+        return `[Customer sent a file (${mime}).]`;
     } catch (e) {
         console.error('[Media] Failed:', e.message);
         return null;
@@ -225,7 +335,6 @@ const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'whatsapp-brain' }),
     puppeteer: {
         headless: true,
-        executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         args: [
             '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--disable-gpu'
@@ -233,7 +342,7 @@ const client = new Client({
     }
 });
 
-// ── Events ────────────────────────────────────────────────────────────────────
+// ── Client events ─────────────────────────────────────────────────────────────
 
 client.on('qr', (qr) => {
     console.log('\n╔══════════════════════════════════════════╗');
@@ -241,24 +350,34 @@ client.on('qr', (qr) => {
     console.log('║  Open WhatsApp → Settings → Linked Devices ║');
     console.log('╚══════════════════════════════════════════╝\n');
     qrcode.generate(qr, { small: true });
+    io.emit('qr_code', { qr });
 });
 
-client.on('authenticated', () => console.log('✅ WhatsApp authenticated!'));
-client.on('auth_failure',  (msg) => console.error('❌ Auth failed:', msg));
+client.on('authenticated', () => {
+    console.log('✅ WhatsApp authenticated!');
+    botStatus = 'authenticated';
+    io.emit('bot_status', { status: 'authenticated' });
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ Auth failed:', msg);
+    botStatus = 'auth_failed';
+    io.emit('bot_status', { status: 'auth_failed' });
+});
 
 client.on('ready', () => {
+    botStatus = 'ready';
+    io.emit('bot_status', { status: 'ready' });
+
     console.log('\n╔══════════════════════════════════════════╗');
-    console.log(`║  ${BOT_NAME} is LIVE on your personal number  ║`);
+    console.log(`║  ${BOT_NAME} — Dashboard Mode              ║`);
     console.log('╚══════════════════════════════════════════╝\n');
+    console.log(`[Dashboard] Open http://localhost:${DASHBOARD_PORT} to manage replies`);
     console.log('[Config] Allowed numbers:', ALLOWED_NUMS.length ? ALLOWED_NUMS.join(', ') : 'ALL');
-    console.log('[Config] History TTL:', HISTORY_TTL_MS / 3600000, 'hours');
-    console.log('[Config] Takeover TTL:', TAKEOVER_TTL_MS / 60000, 'minutes\n');
-    console.log('Commands (send from your own number):');
-    console.log('  !pause <number|all>  — stop bot replying to that contact (or all)');
-    console.log('  !play <number|all>   — resume bot replies\n');
+    console.log('[Config] History TTL:', HISTORY_TTL_MS / 3600000, 'hours\n');
 });
 
-// ── Capture YOUR outgoing messages (message_create fires for sent + received) ──
+// Capture YOUR outgoing messages (manual replies from phone)
 client.on('message_create', async (message) => {
     if (!message.fromMe) return;
     if (message.isStatus) return;
@@ -269,7 +388,7 @@ client.on('message_create', async (message) => {
     const text = message.body?.trim();
     if (!text) return;
 
-    // ── Control commands ──────────────────────────────────────────────────────
+    // Control commands
     if (text.startsWith('!pause')) {
         const target = text.split(' ')[1]?.trim() || '';
         if (target === 'all') {
@@ -277,7 +396,7 @@ client.on('message_create', async (message) => {
             console.log('[Bot] Globally PAUSED');
         } else if (target) {
             pausedContacts.set(target, Date.now() + TAKEOVER_TTL_MS);
-            console.log(`[Bot] Paused for ${target} (${TAKEOVER_TTL_MS / 60000} min)`);
+            console.log(`[Bot] Paused for ${target}`);
         }
         return;
     }
@@ -295,14 +414,20 @@ client.on('message_create', async (message) => {
         return;
     }
 
-    // ── Store your manual reply as assistant context ───────────────────────────
+    // Skip messages already stored by the API reply endpoint
+    if (recentApiReplies.has(text)) {
+        recentApiReplies.delete(text);
+        pausedContacts.set(to, Date.now() + TAKEOVER_TTL_MS);
+        return;
+    }
+
+    // Manual reply from your phone — store in history and auto-pause
     addToHistory(to, 'assistant', text);
-    // Auto-pause that contact for TAKEOVER_TTL_MS since you're manually replying
     pausedContacts.set(to, Date.now() + TAKEOVER_TTL_MS);
-    console.log(`[History] Saved your reply to ${to} | Auto-paused bot for ${TAKEOVER_TTL_MS / 60000} min`);
+    console.log(`[History] Saved your manual reply to ${to}`);
 });
 
-// ── Incoming messages ─────────────────────────────────────────────────────────
+// Incoming messages — generate suggestions instead of auto-replying
 client.on('message', async (message) => {
     try {
         if (processedMessages.has(message.id._serialized)) return;
@@ -318,39 +443,53 @@ client.on('message', async (message) => {
             return;
         }
 
-        // Resolve message content — text or media
         let userText = message.body?.trim();
-
         if (!userText && message.hasMedia) {
             userText = await describeMedia(message);
         }
-
         if (!userText) return;
 
         console.log(`[MSG] From ${senderNumber}: ${userText.substring(0, 100)}`);
-
-        // Store incoming message
         addToHistory(senderNumber, 'user', userText);
 
-        // Skip AI reply if paused (human takeover active)
-        if (isPaused(senderNumber)) {
-            console.log(`[Skip] Bot paused for ${senderNumber}`);
-            return;
-        }
+        // Resolve contact name
+        let contactName = senderNumber;
+        try {
+            const contact = await message.getContact();
+            contactName = contact.pushname || contact.name || senderNumber;
+        } catch {}
 
-        // Typing indicator + delay
-        const chat = await message.getChat();
-        await chat.sendStateTyping();
-        await new Promise(r => setTimeout(r, TYPING_DELAY));
+        // ── Emit to dashboard IMMEDIATELY so it shows up right away ──
+        const pending = {
+            id: message.id._serialized,
+            from: senderNumber,
+            chatId: message.from,
+            name: contactName,
+            text: userText,
+            suggestions: [],   // empty — will be filled in a moment
+            ts: Date.now()
+        };
+        pendingMessages.set(pending.id, pending);
+        io.emit('new_pending', pending);
+        console.log(`[Pending] Message from ${senderNumber} sent to dashboard`);
 
-        // AI response
-        const reply = await getAIResponse(userText, getHistory(senderNumber));
-
-        await chat.clearState();
-        await message.reply(reply);
-
-        addToHistory(senderNumber, 'assistant', reply);
-        console.log(`[REPLY] To ${senderNumber}: ${reply.substring(0, 80)}...`);
+        // ── Generate suggestions in background (don't block the emit above) ──
+        getSuggestions(userText, getHistory(senderNumber))
+            .then(suggestions => {
+                pending.suggestions = suggestions;
+                io.emit('suggestions_updated', { messageId: pending.id, suggestions });
+                console.log(`[Suggestions] Ready for ${senderNumber}`);
+            })
+            .catch(err => {
+                console.error('[Suggestions] Failed:', err.message);
+                const fallback = [
+                    "Got it! I'll get back to you shortly.",
+                    "Sure, happy to help! What do you need?",
+                    "Thanks for reaching out!"
+                ];
+                pending.suggestions = fallback;
+                io.emit('suggestions_updated', { messageId: pending.id, suggestions: fallback });
+            });
 
     } catch (err) {
         console.error('[Error]', err.message);
@@ -358,16 +497,24 @@ client.on('message', async (message) => {
 });
 
 client.on('disconnected', (reason) => {
-    console.log('⚠️  Disconnected:', reason, '— reconnecting...');
-    client.initialize();
+    botStatus = 'disconnected';
+    io.emit('bot_status', { status: 'disconnected' });
+    console.log('⚠️  Disconnected:', reason, '— retrying in 5s...');
+    setTimeout(() => startWhatsApp(), 5000);
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-console.log('\nStarting WhatsApp Personal Bot...');
+console.log('\nStarting WhatsApp Personal Bot (Dashboard Mode)...');
 
+// Start HTTP server first
+httpServer.listen(DASHBOARD_PORT, () => {
+    console.log(`[Dashboard] Running at http://localhost:${DASHBOARD_PORT}`);
+});
+
+// Warm up Ollama
 (async () => {
     try {
-        console.log(`[Warmup] Loading ${OLLAMA_MODEL} into memory...`);
+        console.log(`[Warmup] Loading ${OLLAMA_MODEL}...`);
         await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
             model: OLLAMA_MODEL,
             messages: [{ role: 'user', content: 'hi' }],
@@ -379,4 +526,25 @@ console.log('\nStarting WhatsApp Personal Bot...');
     }
 })();
 
-client.initialize();
+// ── Auto-restart on Puppeteer crash ──────────────────────────────────────────
+async function startWhatsApp() {
+    try {
+        await client.initialize();
+    } catch (err) {
+        console.error('[WhatsApp] Crash:', err.message);
+        console.log('[WhatsApp] Restarting in 5s...');
+        setTimeout(() => startWhatsApp(), 5000);
+    }
+}
+
+// Catch any stray unhandled rejections (e.g. Puppeteer ProtocolError)
+process.on('unhandledRejection', (reason) => {
+    if (reason?.message?.includes('ProtocolError') || reason?.message?.includes('Execution context')) {
+        console.warn('[WhatsApp] Puppeteer context error — will restart automatically');
+        setTimeout(() => startWhatsApp(), 5000);
+    } else {
+        console.error('[UnhandledRejection]', reason);
+    }
+});
+
+startWhatsApp();;
