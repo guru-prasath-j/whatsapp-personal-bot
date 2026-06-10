@@ -1,0 +1,94 @@
+Company: Portfolio Simulator
+Industry: Financial Technology (FinTech) / Investment Analysis Software
+Location: Chennai, India
+
+About:
+Portfolio Simulator is a web-based investment analysis platform that helps users compare and evaluate different investment strategies. Users can simulate Lumpsum, SIP, SWP, Net Worth tracking, Gold comparison, FX conversion, and Cross-Market portfolio performance using historical market data. The platform provides detailed charts, returns analysis, and XIRR calculations for better investment decision-making.
+
+Contact:
+Phone: 9344099154
+WhatsApp: 9344099154
+Email: usergithub02@gmail.com
+
+Services:
+1. Lumpsum Investment Simulator — Free
+   Analyze one-time investments using historical stock prices, returns, and XIRR calculations.
+2. SIP Investment Simulator — Free
+   Simulate monthly SIP investments and evaluate portfolio growth over time.
+3. SWP Investment Simulator — Free
+   Analyze Systematic Withdrawal Plans and compare withdrawal strategies.
+4. Net Worth Analysis — Free
+   Track portfolio value, growth, and performance using historical market data.
+5. Cross-Market Portfolio Comparison — Free
+   Compare portfolios across different countries and currencies with FX conversion support.
+
+Payment Methods:
+Free Platform - No payment required
+
+Refund Policy:
+No refunds applicable as the platform is currently offered free of charge.
+
+Delivery / Turnaround:
+Instant access to portfolio analysis and simulation results.
+
+Languages Supported: English, Tamil
+
+Frequently Asked Questions:
+Q: What is Portfolio Simulator?
+A: Portfolio Simulator is an investment analysis platform that helps users evaluate investment strategies using historical market data.
+Q: What investment strategies are supported?
+A: The platform supports Lumpsum, SIP, SWP, Net Worth Analysis, Gold Comparison, FX View, Cross-Market Comparison, and SIP Cross-Market strategies.
+Q: How are returns calculated?
+A: Returns are calculated using historical stock prices, portfolio valuation methods, and XIRR calculations.
+Q: Which stock markets are supported?
+A: The platform supports US, India, UK, Europe, Japan, and other markets available through Yahoo Finance data.
+Q: Does the platform support currency conversion?
+A: Yes. FX View and Cross-Market modules support historical currency conversion and portfolio comparison across different currencies.
+
+Additional Context:
+Company: Portfolio Simulator
+Industry: Financial Technology (FinTech) / Investment Analysis Software
+Location: Chennai, India
+
+About:
+Portfolio Simulator is a web-based investment analysis platform that helps users compare and evaluate different investment strategies. Users can simulate Lumpsum, SIP, SWP, Net Worth tracking, Gold comparison, FX conversion, and Cross-Market portfolio performance using historical market data. The platform provides detailed charts, returns analysis, and XIRR calculations for better investment decision-making.
+
+Contact:
+Phone: 9344099154
+WhatsApp: 9344099154
+Email: usergithub02@gmail.com
+
+Services:
+1. Lumpsum Investment Simulator — Free
+   Analyze one-time investments using historical stock prices, returns, and XIRR calculations.
+2. SIP Investment Simulator — Free
+   Simulate monthly SIP investments and evaluate portfolio growth over time.
+3. SWP Investment Simulator — Free
+   Analyze Systematic Withdrawal Plans and compare withdrawal strategies.
+4. Net Worth Analysis — Free
+   Track portfolio value, growth, and performance using historical market data.
+5. Cross-Market Portfolio Comparison — Free
+   Compare portfolios across different countries and currencies with FX conversion support.
+
+Payment Methods:
+Free Platform - No payment required
+
+Refund Policy:
+No refunds applicable as the platform is currently offered free of charge.
+
+Delivery / Turnaround:
+Instant access to portfolio analysis and simulation results.
+
+Languages Supported: English, Tamil, Hindi
+
+Frequently Asked Questions:
+Q: What is Portfolio Simulator?
+A: Portfolio Simulator is an investment analysis platform that helps users evaluate investment strategies using historical market data.
+Q: What investment strategies are supported?
+A: The platform supports Lumpsum, SIP, SWP, Net Worth Analysis, Gold Comparison, FX View, Cross-Market Comparison, and SIP Cross-Market strategies.
+Q: How are returns calculated?
+A: Returns are calculated using historical stock prices, portfolio valuation methods, and XIRR calculations.
+Q: Which stock markets are supported?
+A: The platform supports US, India, UK, Europe, Japan, and other markets available through Yahoo Finance data.
+Q: Does the platform support currency conversion?
+A: Yes. FX View and Cross-Market modules support historical currency conversion and portfolio comparison across different currencies.

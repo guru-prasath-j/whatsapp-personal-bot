@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, RefreshCw, Copy, Check, Pencil } from 'lucide-react'
+import { Send, RefreshCw, Copy, Check, Pencil, FileText, Download } from 'lucide-react'
 import Avatar from './Avatar.jsx'
 
 function fmtTime(ts) {
@@ -15,13 +15,62 @@ function formatNumber(id) {
   return id
 }
 
-function Bubble({ role, content, ts }) {
+const URL_RE = /(https?:\/\/[^\s<>"]+)/g
+
+function isYouTube(url) {
+  return /youtu\.be\/|youtube\.com\/(watch|shorts|embed)/.test(url)
+}
+
+function renderContent(text) {
+  const parts = []
+  let last = 0, m
+  URL_RE.lastIndex = 0
+  while ((m = URL_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    const url = m[0]
+    const yt  = isYouTube(url)
+    parts.push(
+      <span key={m.index} className="inline-flex flex-col gap-0.5 max-w-full">
+        <a href={url} target="_blank" rel="noreferrer"
+          className={`underline break-all text-[13px] ${yt ? 'text-red-400 hover:text-red-300' : 'text-blue-300 hover:text-blue-200'}`}>
+          {yt ? '▶ ' : '🔗 '}{url}
+        </a>
+      </span>
+    )
+    last = m.index + url.length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts.length > 0 ? parts : text
+}
+
+function Bubble({ role, content, ts, media }) {
   const isMe = role === 'assistant'
+  const mediaUrl = media ? `/api/media/${media.filename}` : null
+  const label    = media?.origName || media?.filename || ''
   return (
     <div className={`flex mb-1 ${isMe ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
       <div className={`max-w-[70%] px-3 py-2 text-[14px] leading-relaxed text-wa-text
         ${isMe ? 'bubble-out' : 'bubble-in'}`}>
-        <span>{content}</span>
+
+        {/* Inline image */}
+        {media?.type === 'image' && (
+          <a href={mediaUrl} target="_blank" rel="noreferrer" className="block mb-1">
+            <img src={mediaUrl} alt={label}
+              className="max-w-full max-h-60 rounded-lg object-cover cursor-pointer hover:opacity-90 transition-opacity"/>
+          </a>
+        )}
+
+        {/* PDF attachment */}
+        {media?.type === 'pdf' && (
+          <a href={mediaUrl} target="_blank" rel="noreferrer"
+            className="flex items-center gap-2 mb-1.5 px-3 py-2 rounded-lg bg-black/10 hover:bg-black/20 transition-colors group">
+            <FileText size={18} className="flex-shrink-0 text-red-400"/>
+            <span className="flex-1 text-[12px] truncate">{label}</span>
+            <Download size={13} className="flex-shrink-0 opacity-0 group-hover:opacity-60 transition-opacity"/>
+          </a>
+        )}
+
+        {content && !(media && (content.startsWith('[') || content === media.origName || content === media.filename)) && <span className="break-words">{renderContent(content)}</span>}
         <span className={`block text-right text-[11px] mt-0.5 ${isMe ? 'text-white/50' : 'text-wa-muted'}`}>
           {fmtTime(ts)}
           {isMe && (
@@ -64,7 +113,7 @@ function SuggestionChip({ index, text, onSend, onLoad, busy }) {
   )
 }
 
-export default function ChatView({ conversation, onSend }) {
+export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   const { name, messages=[], id, profilePic, realNumber } = conversation
   const [customText, setCustomText]       = useState('')
   const [suggestions, setSuggestions]     = useState([])
@@ -74,35 +123,46 @@ export default function ChatView({ conversation, onSend }) {
   const [nameInput, setNameInput]         = useState('')
   // Track which suggestion was loaded for correction detection (#8)
   const [loadedSuggestion, setLoadedSuggestion] = useState(null)
-  const bottomRef   = useRef(null)
-  const currentIdRef = useRef(id) // tracks which chat is currently open
+  const bottomRef      = useRef(null)
+  const currentIdRef   = useRef(id)
+  const suggFetchingRef = useRef(false)
+  const abortRef        = useRef(null) // AbortController for cancelling in-flight fetches
 
   useEffect(() => { currentIdRef.current = id }, [id])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  const fetchSuggestions = async () => {
-    const forId = id  // capture at call time
+  const fetchSuggestions = async (force = false) => {
+    if (suggFetchingRef.current && !force) return  // auto-triggers skip if busy
+    // Manual (force) click: cancel any in-flight auto-fetch first
+    if (force && abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const forId = id
+    suggFetchingRef.current = true
     setLoadingSugg(true)
     try {
       const res  = await fetch('/api/suggestions', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ contactId: forId })
+        body: JSON.stringify({ contactId: forId }),
+        signal: controller.signal,
       })
       const data = await res.json()
-      // Only apply if user is still on the same chat
       if (currentIdRef.current === forId) {
         setSuggestions(data.suggestions || [])
       }
-    } catch {
-      if (currentIdRef.current === forId) setSuggestions([])
+    } catch (e) {
+      if (e.name !== 'AbortError' && currentIdRef.current === forId) setSuggestions([])
     } finally {
+      suggFetchingRef.current = false
       if (currentIdRef.current === forId) setLoadingSugg(false)
     }
   }
 
   // When switching contact: reset + auto-generate if last msg is from customer
   useEffect(() => {
+    if (abortRef.current) abortRef.current.abort()
+    suggFetchingRef.current = false
     setCustomText(''); setEditingName(false); setLoadedSuggestion(null)
     const last = messages[messages.length - 1]
     if (last?.role === 'user') { setSuggestions([]); fetchSuggestions() }
@@ -188,6 +248,11 @@ export default function ChatView({ conversation, onSend }) {
           )}
           {displayNumber && <p className="text-wa-muted text-[12px]">{displayNumber}</p>}
         </div>
+        {timeFilterLabel && (
+          <span className="flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-wa-green/20 text-wa-green border border-wa-green/30">
+            Last {timeFilterLabel}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -198,7 +263,7 @@ export default function ChatView({ conversation, onSend }) {
               <span className="bg-wa-header/80 text-wa-muted text-xs px-4 py-1.5 rounded-full">No messages yet</span>
             </div>
           )}
-          {messages.map((m,i) => <Bubble key={i} role={m.role} content={m.content} ts={m.ts}/>)}
+          {messages.map((m,i) => <Bubble key={i} role={m.role} content={m.content} ts={m.ts} media={m.media}/>)}
           <div ref={bottomRef} className="h-2"/>
         </div>
 
@@ -209,7 +274,7 @@ export default function ChatView({ conversation, onSend }) {
             {lastIncoming && <p className="text-wa-muted text-[11px] mt-1 truncate">Re: "{lastIncoming.content?.substring(0,40)}…"</p>}
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
-            <button onClick={fetchSuggestions} disabled={loadingSugg||sending}
+            <button onClick={() => fetchSuggestions(true)} disabled={loadingSugg||sending}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-wa-green hover:bg-wa-green-light text-white font-semibold text-[13px] transition-all disabled:opacity-50 shadow-lg shadow-wa-green/20">
               <RefreshCw size={14} className={loadingSugg?'animate-spin':''}/> {loadingSugg?'Generating…':'Get 3 suggestions'}
             </button>
@@ -225,4 +290,13 @@ export default function ChatView({ conversation, onSend }) {
                 rows={3} disabled={sending}
                 className="w-full bg-wa-card border border-wa-border rounded-xl px-3 py-2.5 text-wa-text text-[13px] placeholder:text-wa-muted resize-none outline-none focus:border-wa-green/50 disabled:opacity-50 transition-colors"/>
               <button onClick={()=>handleSend(customText)} disabled={!customText.trim()||sending}
-                className
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-wa-green hover:bg-wa-green-light text-white font-semibold text-[13px] transition-all disabled:opacity-50">
+                {sending ? <RefreshCw size={14} className="animate-spin"/> : <><Send size={14}/> Send</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

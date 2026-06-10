@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Save, Bot, FileText, RefreshCw, Plus, Trash2, ChevronDown, ChevronUp, Upload, File } from 'lucide-react'
+import { X, Save, Bot, FileText, RefreshCw, Plus, Trash2, ChevronDown, ChevronUp, Upload, File, LogOut } from 'lucide-react'
 
 const EMPTY_PROFILE = {
   businessName:'', industry:'', location:'', about:'',
@@ -79,6 +79,7 @@ export default function ProfilePanel({ onClose }) {
   const [saved, setSaved]         = useState(false)
   const [loading, setLoading]     = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
   const [activeTab, setActiveTab] = useState('profile')
   const [openSections, setOpenSections] = useState({ basic:true, contact:true, services:true, hours:false, policies:false, faq:false, bot:false, docs:true })
   const fileRef = useRef()
@@ -109,6 +110,14 @@ export default function ProfilePanel({ onClose }) {
       setLoading(false)
     }).catch(()=>setLoading(false))
   }, [])
+
+  const handleLogout = async () => {
+    if (!window.confirm('Logout from WhatsApp? The bot will stop and show a QR code on next start.')) return
+    setLoggingOut(true)
+    try { await fetch('/api/logout', { method: 'POST' }) } catch {}
+    setLoggingOut(false)
+    onClose()
+  }
 
   const save = async () => {
     setSaving(true)
@@ -317,6 +326,17 @@ export default function ProfilePanel({ onClose }) {
                 ))}
                 <div className="bg-wa-card border border-wa-border/50 rounded-xl px-4 py-3">
                   <p className="text-wa-muted text-[12px] leading-relaxed">Edit your <code className="text-wa-green">.env</code> file and restart to change these.</p>
+                </div>
+
+                {/* Danger zone */}
+                <div className="border border-red-500/20 rounded-xl p-4 flex flex-col gap-3 mt-2">
+                  <p className="text-red-400 text-[11px] uppercase tracking-wider font-semibold">Danger Zone</p>
+                  <button onClick={handleLogout} disabled={loggingOut}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-semibold text-[13px] transition-all disabled:opacity-50">
+                    {loggingOut ? <RefreshCw size={14} className="animate-spin"/> : <LogOut size={14}/>}
+                    {loggingOut ? 'Logging out…' : 'Logout from WhatsApp'}
+                  </button>
+                  <p className="text-wa-muted/60 text-[11px]">Clears the saved session. You will need to scan the QR code again on next start.</p>
                 </div>
               </div>
             )}

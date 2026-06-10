@@ -6,6 +6,13 @@ import ChatView from './components/ChatView.jsx'
 import EmptyState from './components/EmptyState.jsx'
 import ProfilePanel from './components/ProfilePanel.jsx'
 
+const TIME_FILTERS = [
+  { label: 'All', ms: null },
+  { label: '12h', ms: 12 * 60 * 60 * 1000 },
+  { label: '1d',  ms: 24 * 60 * 60 * 1000 },
+  { label: '7d',  ms:  7 * 24 * 60 * 60 * 1000 },
+]
+
 function App() {
   const socketRef                         = useRef(null)
   const [connected, setConnected]         = useState(false)
@@ -15,6 +22,7 @@ function App() {
   const [selectedId, setSelectedId]       = useState(null)
   const [showProfile, setShowProfile]     = useState(false)
   const [toasts, setToasts]               = useState([])
+  const [timeFilter, setTimeFilter]       = useState(null) // null = All
 
   const addToast = useCallback((message, type = 'success') => {
     const id = Date.now()
@@ -41,6 +49,17 @@ function App() {
   }, [fetchConversations])
 
   const selectedConv = conversations.find(c => c.id === selectedId) || null
+
+  // Filter messages inside the open chat to the selected time window
+  const filteredConv = selectedConv && timeFilter
+    ? {
+        ...selectedConv,
+        messages: selectedConv.messages.filter(m => {
+          const ts = m.ts < 1e12 ? m.ts * 1000 : m.ts
+          return Date.now() - ts <= timeFilter
+        })
+      }
+    : selectedConv
 
   const handleSelect = useCallback((id) => {
     setSelectedId(id)
@@ -79,10 +98,12 @@ function App() {
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar conversations={conversations} selectedId={selectedId} onSelect={handleSelect} />
+        <Sidebar conversations={conversations} selectedId={selectedId} onSelect={handleSelect}
+          timeFilter={timeFilter} onTimeFilter={setTimeFilter} />
         <main className="flex-1 overflow-hidden">
-          {selectedConv
-            ? <ChatView conversation={selectedConv} onSend={handleSend} />
+          {filteredConv
+            ? <ChatView conversation={filteredConv} onSend={handleSend}
+                timeFilterLabel={TIME_FILTERS.find(f => f.ms === timeFilter)?.label} />
             : <EmptyState />}
         </main>
       </div>
