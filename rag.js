@@ -107,12 +107,13 @@ async function getSuggestionsViaOllama(question, history = []) {
         .map(m => `${m.role === 'user' ? 'C' : 'M'}: ${m.content.substring(0, 80)}`)
         .join('\n');
 
-    // Ultra-compact prompt — target <60 prompt tokens, <100 output tokens
-    const bizSnippet = businessInfo ? ` Context: ${businessInfo.substring(0, 200)}` : '';
-    const systemPrompt = `Reply as a WhatsApp assistant. Output ONLY: "1. [reply] 2. [reply] 3. [reply]" — each reply is ONE sentence.${bizSnippet}`;
+    const bizSnippet = businessInfo
+        ? `\n\nBusiness Context (use ONLY this — do not add or invent anything not listed here):\n${businessInfo}`
+        : '';
+    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. Do NOT invent features, capabilities, or facts not explicitly stated there. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
     const userPrompt   = ctx
-        ? `${ctx}\nC: ${question}\nWrite 3 reply options:`
-        : `C: ${question}\nWrite 3 reply options:`;
+        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options:`
+        : `Customer: ${question}\nWrite 3 reply options:`;
 
     const response = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
         model: OLLAMA_FAST_MODEL,
@@ -121,7 +122,7 @@ async function getSuggestionsViaOllama(question, history = []) {
             { role: 'user',   content: userPrompt },
         ],
         stream: false,
-        options: { num_predict: 120, temperature: 0.7 },
+        options: { num_predict: 150, temperature: 0.3 },
     }, { timeout: 40000 });
 
     const text = response.data.message?.content || '';
@@ -140,18 +141,34 @@ async function getSuggestionsViaOllama(question, history = []) {
     return DEFAULT_SUGGESTIONS;
 }
 
-async function getSuggestions(question, history = [], customerProfile = {}) {
-    // Go directly to Ollama — the RAG server also uses Ollama internally, so calling
-    // both in sequence causes them to queue on the same Ollama instance and double the wait.
-    // Business context is loaded directly via loadBusinessContext() instead.
-    try {
-        const result = await getSuggestionsViaOllama(question, history);
-        console.log('[Suggestions] Answered via Ollama');
-        return result;
-    } catch (e) {
-        console.log('[Suggestions] Ollama failed:', e.message);
+async function getSuggestionsViaRagServer(question, history = [], customerProfile = {}) {
+    const response = await axios.post(`${RAG_SERVER_URL}/suggestions`, {
+        question,
+        history:          recent(history, 10), // suggestions need less history than auto-reply
+        customer_profile: customerProfile,
+    }, { timeout: 75000 });
+    const suggestions = response.data.suggestions;
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+        throw new Error('No suggestions returned from RAG server');
     }
+    return suggestions;
+}
 
+async function getSuggestions(question, history = [], customerProfile = {}) {
+    try {
+        const result = await getSuggestionsViaRagServer(question, history, customerProfile);
+        console.log('[Suggestions] Answered via RAG server (PDF + docs + history + profile)');
+        return result;
+    } catch (ragErr) {
+        console.log(`[Suggestions] RAG server failed (${ragErr.message}), falling back to Ollama`);
+        try {
+            const result = await getSuggestionsViaOllama(question, history);
+            console.log('[Suggestions] Answered via Ollama fallback');
+            return result;
+        } catch (e) {
+            console.log('[Suggestions] Ollama fallback failed:', e.message);
+        }
+    }
     return DEFAULT_SUGGESTIONS;
 }
 

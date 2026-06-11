@@ -127,6 +127,7 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   const currentIdRef   = useRef(id)
   const suggFetchingRef = useRef(false)
   const abortRef        = useRef(null) // AbortController for cancelling in-flight fetches
+  const sendingRef      = useRef(false) // sync guard against double-send race condition
 
   useEffect(() => { currentIdRef.current = id }, [id])
 
@@ -184,7 +185,8 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   }
 
   const handleSend = async (text) => {
-    if (!text.trim() || sending) return
+    if (!text.trim() || sendingRef.current) return
+    sendingRef.current = true
     setSending(true)
 
     // Detect correction: user edited a suggestion before sending (#8)
@@ -201,6 +203,7 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
     }
 
     await onSend(text)
+    sendingRef.current = false
     setSending(false)
     setCustomText(''); setSuggestions([]); setLoadedSuggestion(null)
   }

@@ -453,8 +453,8 @@ client.on('message_create', async (message) => {
     if (!message.fromMe || message.isStatus) return;
     if (processedMessages.has(message.id._serialized)) return;
     processedMessages.add(message.id._serialized);
-    // Secondary dedup: same recipient+content within 10s catches @c.us vs @lid variants
-    const outKey = `${(message.to || '').replace(/@c\.us$|@lid$/, '')}:${(message.body || '').slice(0, 100)}`;
+    // Secondary dedup: same recipient+content within 10s catches all @suffix variants
+    const outKey = `${(message.to || '').replace(/@.*$/, '')}:${(message.body || '').slice(0, 100)}`;
     const lastOut = recentApiReplies.get(`out:${outKey}`);
     if (lastOut && Date.now() - lastOut < 10000) return;
     recentApiReplies.set(`out:${outKey}`, Date.now());
@@ -668,21 +668,22 @@ app.post('/api/reply', async (req, res) => {
     const { text, to } = req.body;
     if (!text || !to) return res.status(400).json({ error: 'Missing text or to' });
     try {
-        const rec    = conversationHistory.get(to);
-        const waId   = rec?.waId || (to.includes('@') ? to : `${to}@c.us`);
-        const chat   = await client.getChatById(waId);
+        const rec       = conversationHistory.get(to);
+        const waId      = rec?.waId || (to.includes('@') ? to : `${to}@c.us`);
+        const chat      = await client.getChatById(waId);
+        const senderNum = to.replace(/@.*$/, '');
+
+        // Set dedup key BEFORE sendMessage — message_create fires during/before the await resolves
+        const outKey = `${senderNum}:${text.slice(0, 100)}`;
+        recentApiReplies.set(`out:${outKey}`, Date.now());
+        setTimeout(() => recentApiReplies.delete(`out:${outKey}`), 10000);
+
         try { await chat.sendStateTyping(); } catch {}
         await new Promise(r => setTimeout(r, Math.min(text.length * 30, 2000)));
         await chat.sendMessage(text);
         try { await chat.clearState(); } catch {}
 
-        const senderNum = to.replace(/@.*$/, '');
         addToHistory(senderNum, 'assistant', text);
-
-        // Mark so message_create doesn't double-store it
-        recentApiReplies.set(text, Date.now());
-        setTimeout(() => recentApiReplies.delete(text), 5000);
-
         io.emit('conversation_updated');
         console.log(`[API] Reply sent to ${to}: ${text.substring(0, 60)}`);
         res.json({ success: true });
