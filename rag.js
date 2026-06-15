@@ -94,20 +94,38 @@ async function askViaRagServer(question, history = [], customerProfile = {}) {
 }
 
 async function askOllamaDirectly(question, history = []) {
-    const businessInfo = loadBusinessContext(question, 15000); // keyword-relevant sections
+    const businessInfo = loadBusinessContext(question, 8000); // keyword-relevant sections
     const systemPrompt = businessInfo
         ? `You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail. Business information:\n${businessInfo}`
         : 'You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail.';
 
     const messages = [
         { role: 'system', content: systemPrompt },
-        ...recent(history, 10).slice(0, -1),
+        ...recent(history, 4).slice(0, -1), // Fix 4: 4 messages instead of 10
         { role: 'user', content: question },
     ];
     const response = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
         model: OLLAMA_FAST_MODEL, messages, stream: false,
+        keep_alive: -1,                          // Fix 1: keep model loaded permanently
+        options: { num_predict: 80, temperature: 0.3 }, // Fix 2: cap output at 80 tokens
     }, { timeout: 90000 });
     return response.data.message?.content || 'Sorry, I could not generate a response.';
+}
+
+// Fix 3: pre-warm — loads model into memory at startup so first real message is fast
+async function warmupOllama() {
+    try {
+        await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
+            model: OLLAMA_FAST_MODEL,
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: false,
+            keep_alive: -1,
+            options: { num_predict: 1 },
+        }, { timeout: 60000 });
+        console.log('[Ollama] Model warmed up and loaded in memory');
+    } catch (e) {
+        console.warn('[Ollama] Warmup failed (Ollama may not be running):', e.message);
+    }
 }
 
 async function getAIResponse(question, history = [], customerProfile = {}) {
@@ -157,6 +175,7 @@ async function getSuggestionsViaOllama(question, history = []) {
             { role: 'user',   content: userPrompt },
         ],
         stream: false,
+        keep_alive: -1,
         options: { num_predict: 150, temperature: 0.3 },
     }, { timeout: 60000 });
 
@@ -231,4 +250,4 @@ async function summarizeHistory(history) {
     }
 }
 
-module.exports = { getAIResponse, getSuggestions, sendCorrection, summarizeHistory };
+module.exports = { getAIResponse, getSuggestions, sendCorrection, summarizeHistory, warmupOllama };

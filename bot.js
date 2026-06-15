@@ -14,7 +14,7 @@ const express   = require('express');
 const http      = require('http');
 const { Server } = require('socket.io');
 const { execSync } = require('child_process');
-const { getAIResponse, getSuggestions, sendCorrection, summarizeHistory } = require('./rag');
+const { getAIResponse, getSuggestions, sendCorrection, summarizeHistory, warmupOllama } = require('./rag');
 require('dotenv').config();
 
 // Kill stale Chrome AND any node process holding port 3001
@@ -374,6 +374,9 @@ client.on('ready', async () => {
     botStatus = 'ready';
     io.emit('bot_status', { status: 'ready' });
     console.log(`\n✅ ${BOT_NAME} is LIVE — Dashboard: http://localhost:${PORT}\n`);
+
+    // Fix 3: pre-warm Ollama so model is loaded before first real message
+    warmupOllama();
 
     // Load ALL chats from WhatsApp (like WhatsApp Web does on startup)
     console.log('[Sync] Loading all chats from WhatsApp...');
