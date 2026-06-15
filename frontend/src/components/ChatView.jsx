@@ -10,8 +10,8 @@ function fmtFull(ts) {
 
 const CHAT_FILTERS = [
   { label: 'All', ms: null },
+  { label: '12h', ms: 12 * 60 * 60 * 1000 },
   { label: '1d',  ms: 24 * 60 * 60 * 1000 },
-  { label: '2d',  ms: 48 * 60 * 60 * 1000 },
   { label: '7d',  ms:  7 * 24 * 60 * 60 * 1000 },
 ]
 
@@ -139,11 +139,12 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   const [loadedSuggestion, setLoadedSuggestion] = useState(null)
   const [chatFilter, setChatFilter]       = useState(null) // null = All
   const [chatCopied, setChatCopied]       = useState(false)
-  const bottomRef      = useRef(null)
-  const currentIdRef   = useRef(id)
+  const bottomRef       = useRef(null)
+  const currentIdRef    = useRef(id)
   const suggFetchingRef = useRef(false)
   const abortRef        = useRef(null)
   const sendingRef      = useRef(false)
+  const filterInitRef   = useRef(false) // skip auto-fetch on first contact load
 
   useEffect(() => { currentIdRef.current = id }, [id])
 
@@ -188,11 +189,19 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   useEffect(() => {
     if (abortRef.current) abortRef.current.abort()
     suggFetchingRef.current = false
+    filterInitRef.current = false
     setCustomText(''); setEditingName(false); setLoadedSuggestion(null); setChatFilter(null)
     const last = messages[messages.length - 1]
     if (last?.role === 'user') { setSuggestions([]); fetchSuggestions() }
     else setSuggestions([])
   }, [id]) // eslint-disable-line
+
+  // When filter changes: auto-regenerate suggestions using the new time window
+  useEffect(() => {
+    if (!filterInitRef.current) { filterInitRef.current = true; return }
+    const last = messages[messages.length - 1]
+    if (last?.role === 'user') { setSuggestions([]); fetchSuggestions(true) }
+  }, [chatFilter]) // eslint-disable-line
 
   // When a NEW customer message arrives: auto-generate
   const lastMsg    = messages[messages.length - 1]
@@ -343,7 +352,7 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
             </button>
             {suggestions.length>0
               ? suggestions.map((text,i)=><SuggestionChip key={i} index={i} text={text} onSend={handleSend} onLoad={loadSuggestion} busy={sending}/>)
-              : !loadingSugg && <p className="text-wa-muted text-[12px] text-center py-4 leading-relaxed">Click above to generate 3 reply options based on your last 20 messages + business docs</p>
+              : !loadingSugg && <p className="text-wa-muted text-[12px] text-center py-4 leading-relaxed">Click above to generate 3 reply options based on {chatFilter ? `last ${activeFilter?.label}` : 'all'} messages + business docs</p>
             }
             <div className="border-t border-wa-border pt-3 flex flex-col gap-2 mt-1">
               <p className="text-wa-muted text-[11px] uppercase tracking-wider font-semibold">Custom Reply</p>

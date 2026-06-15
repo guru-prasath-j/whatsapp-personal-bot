@@ -13,10 +13,12 @@ const fs    = require('fs');
 const path  = require('path');
 require('dotenv').config();
 
-const OLLAMA_BASE_URL  = process.env.OLLAMA_BASE_URL  || 'http://localhost:11434';
-const OLLAMA_MODEL     = process.env.OLLAMA_MODEL     || 'llama3.2';
+const OLLAMA_BASE_URL   = process.env.OLLAMA_BASE_URL   || 'http://localhost:11434';
+const OLLAMA_MODEL      = process.env.OLLAMA_MODEL      || 'llama3.2';
 const OLLAMA_FAST_MODEL = process.env.OLLAMA_FAST_MODEL || 'llama3.2';
-const RAG_SERVER_URL   = process.env.RAG_SERVER_URL   || 'http://localhost:8000';
+const RAG_SERVER_URL    = process.env.RAG_SERVER_URL    || 'http://localhost:8000';
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY    || '';
+const OPENAI_MODEL      = process.env.OPENAI_MODEL      || 'gpt-4o-mini';
 const DOCS_DIR        = path.join(__dirname, 'docs');
 const COMPANY_FILE    = path.join(DOCS_DIR, 'company_info.txt');
 
@@ -128,21 +130,80 @@ async function warmupOllama() {
     }
 }
 
+async function askChatGPT(question, history = []) {
+    const businessInfo = loadBusinessContext(question, 8000);
+    const systemPrompt = businessInfo
+        ? `You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations. Business information:\n${businessInfo}`
+        : 'You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations.';
+
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        ...recent(history, 4).slice(0, -1),
+        { role: 'user', content: question },
+    ];
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: OPENAI_MODEL,
+        messages,
+        max_tokens: 150,
+        temperature: 0.3,
+    }, {
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+    });
+    return response.data.choices?.[0]?.message?.content?.trim() || 'Sorry, I could not generate a response.';
+}
+
+async function getChatGPTSuggestions(question, history = []) {
+    const businessInfo = loadBusinessContext(question, 8000);
+    const ctx = recent(history, 4)
+        .map(m => `${m.role === 'user' ? 'C' : 'M'}: ${m.content.substring(0, 80)}`)
+        .join('\n');
+    const bizSnippet = businessInfo
+        ? `\n\nBusiness Context (use ONLY this — do not add or invent anything not listed here):\n${businessInfo}`
+        : '';
+    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
+    const userPrompt = ctx
+        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options:`
+        : `Customer: ${question}\nWrite 3 reply options:`;
+
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: OPENAI_MODEL,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 200,
+        temperature: 0.4,
+    }, {
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+    });
+    const text = response.data.choices?.[0]?.message?.content || '';
+    const blocks = [];
+    const re = /(?:^|\n)\s*[123][.)]\s+([\s\S]+?)(?=\n\s*[123][.)]|$)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) blocks.push(m[1].replace(/\n+/g, ' ').trim());
+    if (blocks.length >= 2) return blocks.slice(0, 3);
+    const paras = text.split(/\n\n+/).map(p => p.replace(/^[123][.)]\s*/, '').trim()).filter(Boolean);
+    if (paras.length >= 2) return paras.slice(0, 3);
+    return DEFAULT_SUGGESTIONS;
+}
+
 async function getAIResponse(question, history = [], customerProfile = {}) {
     try {
         const answer = await askViaRagServer(question, history, customerProfile);
         console.log('[RAG] Answered via RAG server');
         return answer;
     } catch (ragErr) {
-        console.log(`[RAG] Server unavailable (${ragErr.message}), falling back to Ollama`);
-        try {
-            const answer = await askOllamaDirectly(question, history);
-            console.log('[Ollama] Answered directly');
+        console.log(`[RAG] Server unavailable (${ragErr.message}), falling back to LLM`);
+        if (OPENAI_API_KEY) {
+            const answer = await askChatGPT(question, history);
+            console.log('[ChatGPT] Answered directly');
             return answer;
-        } catch (ollamaError) {
-            console.error('[Error] Both RAG and Ollama failed:', ollamaError.message);
-            return "Sorry, I'm having trouble right now. Please try again in a moment.";
         }
+        const answer = await askOllamaDirectly(question, history);
+        console.log('[Ollama] Answered directly');
+        return answer;
     }
 }
 
@@ -214,16 +275,16 @@ async function getSuggestions(question, history = [], customerProfile = {}) {
         console.log('[Suggestions] Answered via RAG server (PDF + docs + history + profile)');
         return result;
     } catch (ragErr) {
-        console.log(`[Suggestions] RAG server failed (${ragErr.message}), falling back to Ollama`);
-        try {
-            const result = await getSuggestionsViaOllama(question, history);
-            console.log('[Suggestions] Answered via Ollama fallback');
+        console.log(`[Suggestions] RAG server failed (${ragErr.message}), falling back to LLM`);
+        if (OPENAI_API_KEY) {
+            const result = await getChatGPTSuggestions(question, history);
+            console.log('[Suggestions] Answered via ChatGPT');
             return result;
-        } catch (e) {
-            console.log('[Suggestions] Ollama fallback failed:', e.message);
         }
+        const result = await getSuggestionsViaOllama(question, history);
+        console.log('[Suggestions] Answered via Ollama');
+        return result;
     }
-    return DEFAULT_SUGGESTIONS;
 }
 
 // ── Send correction to brain (#8) ─────────────────────────────────────────────

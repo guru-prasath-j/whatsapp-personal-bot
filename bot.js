@@ -355,7 +355,7 @@ const client = new Client({
         executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
                '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--disable-gpu'],
-        protocolTimeout: 120000
+        protocolTimeout: 300000
     }
 });
 
@@ -394,23 +394,14 @@ client.on('ready', async () => {
                 const msgs = await chat.fetchMessages({ limit: 200 });
                 if (!msgs || msgs.length === 0) continue;
 
-                // Build message history — include images & PDFs
+                // Build message history — skip media downloads at startup to avoid timeouts
                 const raw = [];
                 for (const m of msgs) {
                     if (m.isStatus) continue;
                     const body = m.body?.trim() || '';
-                    if (!body && !m.hasMedia) continue;
+                    if (!body) continue;
 
-                    let mediaInfo = null;
-                    if (m.hasMedia) mediaInfo = await saveMediaFromMsg(m);
-
-                    let content = body;
-                    if (!content && mediaInfo)
-                        content = mediaInfo.type === 'image' ? '[Image]' : `[PDF: ${mediaInfo.origName}]`;
-                    if (!content) continue;
-
-                    const entry = { role: m.fromMe ? 'assistant' : 'user', content, ts: m.timestamp * 1000 };
-                    if (mediaInfo) entry.media = mediaInfo;
+                    const entry = { role: m.fromMe ? 'assistant' : 'user', content: body, ts: m.timestamp * 1000 };
                     raw.push(entry);
                 }
                 const seeded = raw.sort((a, b) => a.ts - b.ts).slice(-200);
