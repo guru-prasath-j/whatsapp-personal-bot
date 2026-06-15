@@ -32,13 +32,48 @@ function isNoDocsResponse(text) {
     return RAG_NO_DOCS_PHRASES.some(p => lower.includes(p));
 }
 
-function loadBusinessContext() {
+function loadBusinessContext(question = '', maxChars = 15000) {
+    const parts = [];
     try {
+        // company_info.txt always first
         if (fs.existsSync(COMPANY_FILE)) {
-            return fs.readFileSync(COMPANY_FILE, 'utf8').trim();
+            const c = fs.readFileSync(COMPANY_FILE, 'utf8').trim();
+            if (c) parts.push(c);
+        }
+        // Other txt files — pick relevant sections based on question keywords
+        if (fs.existsSync(DOCS_DIR)) {
+            const keywords = question.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+            const files = fs.readdirSync(DOCS_DIR)
+                .filter(f => f.endsWith('.txt') && f !== path.basename(COMPANY_FILE));
+
+            for (const file of files) {
+                try {
+                    const content = fs.readFileSync(path.join(DOCS_DIR, file), 'utf8').trim();
+                    if (content.length < 50) continue;
+
+                    // Split into sections by === headers
+                    const sections = content.split(/\n(?====)/).map(s => s.trim()).filter(s => s.length > 50);
+
+                    if (keywords.length > 0 && sections.length > 3) {
+                        // Score each section by how many keywords it contains
+                        const scored = sections
+                            .map(s => ({
+                                text: s,
+                                score: keywords.reduce((n, kw) => n + (s.toLowerCase().includes(kw) ? 1 : 0), 0)
+                            }))
+                            .sort((a, b) => b.score - a.score);
+
+                        // Take top 5 most relevant sections
+                        const relevant = scored.slice(0, 5).map(s => s.text).join('\n\n');
+                        parts.push(`--- ${file} ---\n${relevant}`);
+                    } else {
+                        parts.push(`--- ${file} ---\n${content.substring(0, 8000)}`);
+                    }
+                } catch {}
+            }
         }
     } catch {}
-    return '';
+    return parts.join('\n\n').substring(0, maxChars);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,7 +94,7 @@ async function askViaRagServer(question, history = [], customerProfile = {}) {
 }
 
 async function askOllamaDirectly(question, history = []) {
-    const businessInfo = loadBusinessContext();
+    const businessInfo = loadBusinessContext(question, 15000); // keyword-relevant sections
     const systemPrompt = businessInfo
         ? `You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail. Business information:\n${businessInfo}`
         : 'You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail.';
@@ -71,7 +106,7 @@ async function askOllamaDirectly(question, history = []) {
     ];
     const response = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
         model: OLLAMA_FAST_MODEL, messages, stream: false,
-    }, { timeout: 45000 });
+    }, { timeout: 90000 });
     return response.data.message?.content || 'Sorry, I could not generate a response.';
 }
 
@@ -101,7 +136,7 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 async function getSuggestionsViaOllama(question, history = []) {
-    const businessInfo = loadBusinessContext();
+    const businessInfo = loadBusinessContext(question, 8000); // keyword-relevant sections
     // Keep last 2 exchanges only — minimise prompt tokens for speed
     const ctx = recent(history, 4)
         .map(m => `${m.role === 'user' ? 'C' : 'M'}: ${m.content.substring(0, 80)}`)
@@ -123,7 +158,7 @@ async function getSuggestionsViaOllama(question, history = []) {
         ],
         stream: false,
         options: { num_predict: 150, temperature: 0.3 },
-    }, { timeout: 40000 });
+    }, { timeout: 60000 });
 
     const text = response.data.message?.content || '';
 

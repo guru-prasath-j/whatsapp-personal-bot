@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Save, Bot, FileText, RefreshCw, Plus, Trash2, ChevronDown, ChevronUp, Upload, File, LogOut } from 'lucide-react'
+import { X, Save, Bot, FileText, RefreshCw, Plus, Trash2, ChevronDown, ChevronUp, Upload, File, LogOut, Globe, Check } from 'lucide-react'
 
 const EMPTY_PROFILE = {
   businessName:'', industry:'', location:'', about:'',
@@ -80,6 +80,9 @@ export default function ProfilePanel({ onClose }) {
   const [loading, setLoading]     = useState(true)
   const [uploading, setUploading] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [urlInput, setUrlInput]   = useState('')
+  const [crawling, setCrawling]   = useState(false)
+  const [crawlMsg, setCrawlMsg]   = useState(null)
   const [activeTab, setActiveTab] = useState('profile')
   const [openSections, setOpenSections] = useState({ basic:true, contact:true, services:true, hours:false, policies:false, faq:false, bot:false, docs:true })
   const fileRef = useRef()
@@ -154,6 +157,33 @@ export default function ProfilePanel({ onClose }) {
   const deleteDoc = async (name) => {
     await fetch(`/api/docs/${encodeURIComponent(name)}`, { method:'DELETE' })
     await fetchDocs()
+  }
+
+  const crawlUrl = async () => {
+    if (!urlInput.trim()) return
+    setCrawling(true); setCrawlMsg(null)
+    try {
+      const res  = await fetch('/api/docs/crawl', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() })
+      })
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('application/json')) {
+        setCrawlMsg({ ok: false, text: 'Server not ready — please restart the bot server and try again' })
+        return
+      }
+      const data = await res.json()
+      if (data.success) {
+        setCrawlMsg({ ok: true, text: `Fetched ${data.pages} page(s) → saved as ${data.filename}` })
+        setUrlInput('')
+        await fetchDocs()
+      } else {
+        setCrawlMsg({ ok: false, text: data.error || 'Failed to fetch URL' })
+      }
+    } catch (e) {
+      setCrawlMsg({ ok: false, text: e.message })
+    }
+    setCrawling(false)
   }
 
   const addService = () => setProfile(p=>({...p,services:[...p.services,{name:'',description:'',price:''}]}))
@@ -271,6 +301,29 @@ export default function ProfilePanel({ onClose }) {
                     Upload any business documents — price lists, catalogues, brochures, policies. The AI will read and use them to answer customers.
                     <br/><span className="text-wa-green">Supported: PDF, TXT, DOCX, MD, CSV</span>
                   </p>
+
+                  {/* Website URL crawler */}
+                  <div className="flex flex-col gap-2">
+                    <p className="text-wa-muted text-[11px] uppercase tracking-wider font-semibold flex items-center gap-1.5"><Globe size={11}/> Fetch from Website URL</p>
+                    <div className="flex gap-2">
+                      <input
+                        value={urlInput} onChange={e=>setUrlInput(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==='Enter') crawlUrl() }}
+                        placeholder="https://yoursite.com/help"
+                        className={inp + ' flex-1'}/>
+                      <button onClick={crawlUrl} disabled={crawling || !urlInput.trim()}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-wa-green hover:bg-wa-green-light text-white text-[12px] font-semibold transition-all disabled:opacity-50 flex-shrink-0">
+                        {crawling ? <RefreshCw size={12} className="animate-spin"/> : <Globe size={12}/>}
+                        {crawling ? 'Fetching…' : 'Fetch'}
+                      </button>
+                    </div>
+                    {crawlMsg && (
+                      <p className={`text-[11px] flex items-center gap-1.5 ${crawlMsg.ok ? 'text-wa-green' : 'text-red-400'}`}>
+                        {crawlMsg.ok ? <Check size={11}/> : null}{crawlMsg.text}
+                      </p>
+                    )}
+                    <p className="text-wa-muted/60 text-[11px]">Crawls up to 15 pages from the same domain and indexes them for the AI.</p>
+                  </div>
 
                   {/* Upload zone */}
                   <div

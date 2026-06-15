@@ -2,18 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import { Send, RefreshCw, Copy, Check, Pencil, FileText, Download } from 'lucide-react'
 import Avatar from './Avatar.jsx'
 
-function fmtTime(ts) {
+function fmtFull(ts) {
   if (!ts) return ''
   const t = ts < 1e12 ? ts * 1000 : ts
-  return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(t).toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function formatNumber(id) {
-  if (!id) return ''
-  const digits = id.replace(/\D/g, '')
-  if (digits.length > 10) return `+${digits}`
-  return id
-}
+const CHAT_FILTERS = [
+  { label: 'All', ms: null },
+  { label: '1d',  ms: 24 * 60 * 60 * 1000 },
+  { label: '2d',  ms: 48 * 60 * 60 * 1000 },
+  { label: '7d',  ms:  7 * 24 * 60 * 60 * 1000 },
+]
 
 const URL_RE = /(https?:\/\/[^\s<>"]+)/g
 
@@ -43,14 +43,28 @@ function renderContent(text) {
   return parts.length > 0 ? parts : text
 }
 
-function Bubble({ role, content, ts, media }) {
-  const isMe = role === 'assistant'
+function Bubble({ role, content, ts, media, senderName }) {
+  const isMe    = role === 'assistant'
   const mediaUrl = media ? `/api/media/${media.filename}` : null
   const label    = media?.origName || media?.filename || ''
+  const fullTime = fmtFull(ts)
+
   return (
-    <div className={`flex mb-1 ${isMe ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
+    <div className={`flex flex-col mb-3 ${isMe ? 'items-end pr-2' : 'items-start pl-2'}`}>
+      {/* Timestamp + sender name above bubble for received messages */}
+      {!isMe && fullTime && (
+        <span className="text-wa-muted text-[11px] mb-0.5 ml-1 select-none">
+          {fullTime} · {senderName}
+        </span>
+      )}
+
       <div className={`max-w-[70%] px-3 py-2 text-[14px] leading-relaxed text-wa-text
         ${isMe ? 'bubble-out' : 'bubble-in'}`}>
+
+        {/* Timestamp + Me inside sent bubble at top */}
+        {isMe && fullTime && (
+          <span className="block text-white/50 text-[11px] mb-1.5">{fullTime} · Me</span>
+        )}
 
         {/* Inline image */}
         {media?.type === 'image' && (
@@ -70,15 +84,17 @@ function Bubble({ role, content, ts, media }) {
           </a>
         )}
 
-        {content && !(media && (content.startsWith('[') || content === media.origName || content === media.filename)) && <span className="break-words">{renderContent(content)}</span>}
-        <span className={`block text-right text-[11px] mt-0.5 ${isMe ? 'text-white/50' : 'text-wa-muted'}`}>
-          {fmtTime(ts)}
-          {isMe && (
-            <svg viewBox="0 0 18 18" className="inline-block w-3 h-3 ml-1 fill-white/60">
+        {content && !(media && (content.startsWith('[') || content === media.origName || content === media.filename)) && (
+          <span className="break-words">{renderContent(content)}</span>
+        )}
+
+        {isMe && (
+          <span className="block text-right mt-0.5">
+            <svg viewBox="0 0 18 18" className="inline-block w-3 h-3 fill-white/60">
               <path d="M17.394 5.035l-.57-.444a.434.434 0 00-.609.076L8.397 15.17l-4.572-3.918a.434.434 0 00-.609.076l-.444.57a.434.434 0 00.076.609l5.44 4.658a.434.434 0 00.609-.076L17.47 5.644a.434.434 0 00-.076-.609z"/>
             </svg>
-          )}
-        </span>
+          </span>
+        )}
       </div>
     </div>
   )
@@ -99,7 +115,6 @@ function SuggestionChip({ index, text, onSend, onLoad, busy }) {
           {copied ? <Check size={10} className="text-wa-green"/> : <Copy size={10}/>}
           {copied ? 'Copied' : 'Copy'}
         </button>
-        {/* Load into textarea for editing before send (#8) */}
         <button onClick={()=>onLoad(text)} disabled={busy}
           className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-wa-bg border border-wa-border text-wa-muted hover:text-wa-text text-xs transition-all">
           <Pencil size={10}/> Edit
@@ -121,21 +136,30 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   const [sending, setSending]             = useState(false)
   const [editingName, setEditingName]     = useState(false)
   const [nameInput, setNameInput]         = useState('')
-  // Track which suggestion was loaded for correction detection (#8)
   const [loadedSuggestion, setLoadedSuggestion] = useState(null)
+  const [chatFilter, setChatFilter]       = useState(null) // null = All
+  const [chatCopied, setChatCopied]       = useState(false)
   const bottomRef      = useRef(null)
   const currentIdRef   = useRef(id)
   const suggFetchingRef = useRef(false)
-  const abortRef        = useRef(null) // AbortController for cancelling in-flight fetches
-  const sendingRef      = useRef(false) // sync guard against double-send race condition
+  const abortRef        = useRef(null)
+  const sendingRef      = useRef(false)
 
   useEffect(() => { currentIdRef.current = id }, [id])
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  // Filter messages by selected time window
+  const now = Date.now()
+  const visibleMessages = chatFilter
+    ? messages.filter(m => {
+        const ts = m.ts < 1e12 ? m.ts * 1000 : m.ts
+        return now - ts <= chatFilter
+      })
+    : messages
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [visibleMessages])
 
   const fetchSuggestions = async (force = false) => {
-    if (suggFetchingRef.current && !force) return  // auto-triggers skip if busy
-    // Manual (force) click: cancel any in-flight auto-fetch first
+    if (suggFetchingRef.current && !force) return
     if (force && abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -145,7 +169,7 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
     try {
       const res  = await fetch('/api/suggestions', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ contactId: forId }),
+        body: JSON.stringify({ contactId: forId, filterMs: chatFilter }),
         signal: controller.signal,
       })
       const data = await res.json()
@@ -164,7 +188,7 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
   useEffect(() => {
     if (abortRef.current) abortRef.current.abort()
     suggFetchingRef.current = false
-    setCustomText(''); setEditingName(false); setLoadedSuggestion(null)
+    setCustomText(''); setEditingName(false); setLoadedSuggestion(null); setChatFilter(null)
     const last = messages[messages.length - 1]
     if (last?.role === 'user') { setSuggestions([]); fetchSuggestions() }
     else setSuggestions([])
@@ -178,7 +202,6 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
     fetchSuggestions()
   }, [lastMsgKey]) // eslint-disable-line
 
-  // Load suggestion into textarea for editing (#8)
   const loadSuggestion = (text) => {
     setCustomText(text)
     setLoadedSuggestion(text)
@@ -189,7 +212,6 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
     sendingRef.current = true
     setSending(true)
 
-    // Detect correction: user edited a suggestion before sending (#8)
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
     if (loadedSuggestion && text.trim() !== loadedSuggestion.trim() && lastUserMsg) {
       fetch('/api/feedback', {
@@ -217,11 +239,23 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
     setEditingName(false)
   }
 
+  const copyChat = async () => {
+    const text = visibleMessages.map(m => {
+      const who  = m.role === 'user' ? name : 'Me'
+      const time = fmtFull(m.ts)
+      return `${time} · ${who}\n${m.content || ''}`
+    }).join('\n\n')
+    await navigator.clipboard.writeText(text)
+    setChatCopied(true)
+    setTimeout(() => setChatCopied(false), 2000)
+  }
+
   const rawNumber = realNumber || id.replace(/@.*$/, "")
   const isLid = rawNumber.replace(/\D/g, "").length > 13
   const displayNumber = isLid ? null : `+${rawNumber.replace(/\D/g, "")}`
   const isUnknown = !name || name === id || /^\d{10,}$/.test(name)
-  const lastIncoming = [...messages].reverse().find(m => m.role === 'user')
+  const lastIncoming = [...visibleMessages].reverse().find(m => m.role === 'user')
+  const activeFilter = CHAT_FILTERS.find(f => f.ms === chatFilter)
 
   return (
     <div className="h-full flex flex-col bg-wa-bg overflow-hidden">
@@ -250,23 +284,49 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
             </div>
           )}
           {displayNumber && <p className="text-wa-muted text-[12px]">{displayNumber}</p>}
+          {chatFilter && (
+            <p className="text-wa-green text-[11px] font-medium mt-0.5">
+              Showing {visibleMessages.length} message{visibleMessages.length !== 1 ? 's' : ''} from last {activeFilter?.label}
+            </p>
+          )}
         </div>
-        {timeFilterLabel && (
-          <span className="flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-wa-green/20 text-wa-green border border-wa-green/30">
-            Last {timeFilterLabel}
-          </span>
-        )}
+
+        {/* Time filter pills + Copy chat */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-wa-muted text-[11px] mr-1 font-medium">Show:</span>
+          {CHAT_FILTERS.map(f => (
+            <button key={f.label} onClick={() => setChatFilter(f.ms)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all
+                ${chatFilter === f.ms
+                  ? 'bg-wa-green text-white shadow-sm shadow-wa-green/30'
+                  : 'bg-wa-card text-wa-muted border border-wa-border hover:text-wa-text hover:border-wa-green/40'}`}>
+              {f.label}
+            </button>
+          ))}
+          <button onClick={copyChat}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all ml-1
+              ${chatCopied
+                ? 'bg-wa-green/20 text-wa-green border-wa-green/40'
+                : 'bg-wa-card text-wa-muted border-wa-border hover:text-wa-text hover:border-wa-green/40'}`}>
+            {chatCopied ? <Check size={10}/> : <Copy size={10}/>}
+            {chatCopied ? 'Copied!' : 'Copy chat'}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Chat bubbles */}
         <div className="flex-1 overflow-y-auto py-4 chat-wallpaper">
-          {messages.length === 0 && (
+          {visibleMessages.length === 0 && (
             <div className="flex justify-center mt-8">
-              <span className="bg-wa-header/80 text-wa-muted text-xs px-4 py-1.5 rounded-full">No messages yet</span>
+              <span className="bg-wa-header/80 text-wa-muted text-xs px-4 py-1.5 rounded-full">
+                {chatFilter ? `No messages in last ${activeFilter?.label}` : 'No messages yet'}
+              </span>
             </div>
           )}
-          {messages.map((m,i) => <Bubble key={i} role={m.role} content={m.content} ts={m.ts} media={m.media}/>)}
+          {visibleMessages.map((m,i) => (
+            <Bubble key={i} role={m.role} content={m.content} ts={m.ts} media={m.media} senderName={name || displayNumber}/>
+          ))}
           <div ref={bottomRef} className="h-2"/>
         </div>
 

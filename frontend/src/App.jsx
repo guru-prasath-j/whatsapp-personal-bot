@@ -84,7 +84,7 @@ function App() {
     const endpoint = globalPaused ? '/api/play' : '/api/pause'
     await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: 'all' }) })
-    setGlobalPaused(p => !p)
+    // State is updated via socket 'pause_changed' event — no local toggle needed
   }, [globalPaused])
 
   return (

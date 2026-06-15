@@ -535,7 +535,8 @@ client.on('message', async (message) => {
         io.emit('conversation_updated');
 
         // Auto-reply — wait 1.5s for burst to settle, then send ONE reply covering all messages
-        if (!isPaused(senderNumber)) {
+        // Skip if AI queue is already backed up (> 2 pending) to avoid timeout cascade
+        if (!isPaused(senderNumber) && _aiQueueDepth < 3) {
             if (!pendingQueues.has(senderNumber)) pendingQueues.set(senderNumber, []);
             pendingQueues.get(senderNumber).push({ text: userText, message });
 
@@ -587,9 +588,7 @@ function triggerRagReload() {
     const RAG_SERVER_URL = process.env.RAG_SERVER_URL || 'http://localhost:8000';
     axios.post(`${RAG_SERVER_URL}/reload`).then(() => {
         console.log('[RAG] Re-indexing triggered');
-    }).catch(e => {
-        console.warn('[RAG] Could not trigger reload (server may be down):', e.message);
-    });
+    }).catch(() => {}); // RAG server is optional — silence error when not running
 }
 
 // ── REST API ──────────────────────────────────────────────────────────────────
@@ -623,7 +622,7 @@ const suggestionInProgress = new Map();
 
 // Generate 3 reply suggestions for a contact
 app.post('/api/suggestions', async (req, res) => {
-    const { contactId } = req.body;
+    const { contactId, filterMs } = req.body;
     if (!contactId) return res.status(400).json({ error: 'Missing contactId' });
 
     // If auto-reply is queued/running, skip — avoids competing with the reply queue
@@ -645,7 +644,14 @@ app.post('/api/suggestions', async (req, res) => {
     }
 
     try {
-        const history = getHistory(contactId);
+        let history = getHistory(contactId);
+        if (filterMs) {
+            const cutoff = Date.now() - parseInt(filterMs);
+            const rec = getRecord(contactId);
+            history = (rec.messages || [])
+                .filter(m => { const ts = m.ts < 1e12 ? m.ts * 1000 : m.ts; return ts >= cutoff; })
+                .map(m => ({ role: m.role, content: m.content }));
+        }
         const lastMsg = history.filter(m => m.role === 'user').pop();
         if (!lastMsg) return res.json({ suggestions: DEFAULT_SUGGESTIONS });
 
@@ -756,6 +762,188 @@ app.delete('/api/docs/:name', (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Crawl a website URL using Puppeteer (handles React/SPA sites) and save content as a doc
+// Clicks every nav/menu item and expands all accordions to capture full content
+app.post('/api/docs/crawl', async (req, res) => {
+    const { url, maxPages = 10 } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL required' });
+
+    let baseUrl;
+    try { baseUrl = new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+    const puppeteer = require('puppeteer-core');
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+        });
+
+        const visited  = new Set();
+        const queue    = [url];
+        const sections = []; // { label, text }
+
+        // Words that indicate action buttons, not nav/section items
+        const ACTION_WORDS = new Set([
+            'plot','simulate','fetch','download csv','remove','add stock','+ add stock',
+            '+ add ticker','add holding','+ add holding','load chart','load gold view',
+            'load','send','show','hide','compare','weekly','monthly','weeklymonthly',
+            'fixed $/month','% of portfolio/month','fixed $/monthopen',
+            '% of portfolio/monthopen','load gold view','add holding','+ add stock',
+        ]);
+
+        // Extract visible text using a DOM clone — does NOT modify the live page
+        const extractText = (page) => page.evaluate(() => {
+            const clone = document.body?.cloneNode(true);
+            if (!clone) return '';
+            ['script','style','svg','noscript'].forEach(tag =>
+                clone.querySelectorAll(tag).forEach(el => el.remove())
+            );
+            return (clone.innerText || '').replace(/\s+/g, ' ').trim();
+        });
+
+        // Find all clickable leaf items (cursor:pointer divs/spans/li — works for SPAs with no nav tag)
+        const getClickableItems = (page) => page.evaluate(() => {
+            return [...new Set(
+                Array.from(document.querySelectorAll('div, span, li'))
+                    .filter(el => {
+                        if (el.children.length > 0) return false;
+                        const text = el.innerText?.trim();
+                        if (!text || text.length < 3 || text.length > 60) return false;
+                        return window.getComputedStyle(el).cursor === 'pointer';
+                    })
+                    .map(el => el.innerText?.trim())
+            )];
+        });
+
+        // Click a specific item by matching its visible text
+        const clickItem = (page, text) => page.evaluate((t) => {
+            const el = Array.from(document.querySelectorAll('div, span, li'))
+                .find(e => e.children.length === 0 && e.innerText?.trim() === t
+                        && window.getComputedStyle(e).cursor === 'pointer');
+            if (el) { el.click(); return true; }
+            return false;
+        }, text);
+
+        // Normalize URL: strip hash, query, trailing slash
+        const normalizeUrl = (u) => {
+            try {
+                const p = new URL(u);
+                return `${p.protocol}//${p.hostname}${p.pathname}`.replace(/\/$/, '');
+            } catch { return u; }
+        };
+
+        while (queue.length > 0 && visited.size < maxPages) {
+            const current = normalizeUrl(queue.shift());
+            if (visited.has(current)) continue;
+            visited.add(current);
+
+            const page = await browser.newPage();
+            try {
+                await page.goto(current, { waitUntil: 'networkidle2', timeout: 25000 });
+
+                // ── Step 1: capture main page content ──
+                const mainText = await extractText(page);
+                if (mainText.length > 100) {
+                    sections.push({ label: current, text: mainText });
+                    console.log(`[Crawl] ✓ Main page (${mainText.length} chars)`);
+                }
+
+                // ── Step 2: get ALL nav items (clickable + currently-active siblings) ──
+                const allNavTexts = await page.evaluate(() => {
+                    const clickableEls = Array.from(document.querySelectorAll('div, span, li'))
+                        .filter(el => {
+                            if (el.children.length > 0) return false;
+                            const text = el.innerText?.trim();
+                            if (!text || text.length < 3 || text.length > 60) return false;
+                            return window.getComputedStyle(el).cursor === 'pointer';
+                        });
+                    const all = new Set(clickableEls.map(e => e.innerText?.trim()));
+                    // Include siblings of clickable items (the currently-active nav item has cursor:default)
+                    new Set(clickableEls.map(e => e.parentElement).filter(Boolean))
+                        .forEach(parent => Array.from(parent.children).forEach(child => {
+                            if (child.children.length === 0) {
+                                const t = child.innerText?.trim();
+                                if (t && t.length >= 3 && t.length <= 60) all.add(t);
+                            }
+                        }));
+                    return [...all];
+                });
+                const navSet      = new Set(allNavTexts); // complete nav set including active item
+                const navItems    = allNavTexts.filter(t => !ACTION_WORDS.has(t.toLowerCase()));
+                console.log(`[Crawl] Nav items: ${navItems.join(', ')}`);
+
+                // ── Step 3: click each nav item → save section → find & click sub-items ──
+                for (const navItem of navItems) {
+                    try {
+                        const clicked = await clickItem(page, navItem);
+                        if (!clicked) continue;
+                        await new Promise(r => setTimeout(r, 1200));
+
+                        // Always save the nav section content first
+                        const navText = await extractText(page);
+                        if (navText.length > 100 && navText !== mainText) {
+                            sections.push({ label: `${current} › ${navItem}`, text: navText });
+                            console.log(`[Crawl] ✓ "${navItem}" (${navText.length} chars)`);
+                        }
+
+                        // Find genuinely NEW items — not in the complete nav set (e.g. FAQ accordions)
+                        const afterItems = await getClickableItems(page);
+                        const subItems = afterItems.filter(t =>
+                            !ACTION_WORDS.has(t.toLowerCase()) && !navSet.has(t)
+                        );
+
+                        for (const sub of subItems) {
+                            const subClicked = await clickItem(page, sub);
+                            if (!subClicked) continue;
+                            await new Promise(r => setTimeout(r, 500));
+                            const subText = await extractText(page);
+                            if (subText.length > 100) {
+                                sections.push({ label: `${current} › ${navItem} › ${sub}`, text: subText });
+                                console.log(`[Crawl] ✓ "${navItem} › ${sub}" (${subText.length} chars)`);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`[Crawl] Skipped nav "${navItem}":`, e.message);
+                    }
+                }
+
+                // SPA: all content captured via nav clicking — no need to follow links
+
+            } catch (e) {
+                console.warn(`[Crawl] Skipped ${current}:`, e.message);
+            } finally {
+                await page.close().catch(() => {});
+            }
+        }
+
+        if (sections.length === 0) return res.status(400).json({ error: 'No content could be fetched — site may be blocking crawlers' });
+
+        // Deduplicate by label (each section has a unique label)
+        const seen   = new Set();
+        const unique = sections.filter(s => {
+            if (seen.has(s.label)) return false;
+            seen.add(s.label);
+            return true;
+        });
+
+        const domain   = baseUrl.hostname.replace(/[^a-z0-9]/gi, '_');
+        const content  = unique.map(s => `=== ${s.label} ===\n${s.text}`).join('\n\n');
+        const filename = `website_${domain}.txt`;
+        fs.writeFileSync(path.join(DOCS_DIR, filename), content, 'utf8');
+        triggerRagReload();
+        console.log(`[Crawl] Saved ${unique.length} section(s) → ${filename} (${content.length} chars)`);
+        res.json({ success: true, pages: unique.length, filename });
+
+    } catch (e) {
+        console.error('[Crawl] Error:', e.message);
+        res.status(500).json({ error: e.message });
+    } finally {
+        if (browser) await browser.close().catch(() => {});
+    }
+});
+
 // Save RAG correction (correction learning #8)
 app.post('/api/feedback', async (req, res) => {
     const { question, original, corrected } = req.body;
@@ -777,8 +965,38 @@ app.post('/api/pause', (req, res) => {
 
 app.post('/api/play', (req, res) => {
     const { target } = req.body;
-    if (target === 'all') { globalPaused = false; pausedContacts.clear(); }
-    else if (target)      { pausedContacts.delete(target); }
+    if (target === 'all') {
+        globalPaused = false;
+        pausedContacts.clear();
+
+        // Retroactively reply to unanswered messages from the last 30 minutes
+        const now = Date.now();
+        const MAX_AGE_MS = 30 * 60 * 1000;
+        for (const [senderNum, rec] of conversationHistory.entries()) {
+            if (!rec.messages || rec.messages.length === 0 || !rec.waId) continue;
+            const lastMsg = rec.messages[rec.messages.length - 1];
+            if (lastMsg.role !== 'user') continue;
+            const msgTs = lastMsg.ts < 1e12 ? lastMsg.ts * 1000 : lastMsg.ts;
+            if (now - msgTs > MAX_AGE_MS) continue;
+            const waId    = rec.waId;
+            const userTxt = lastMsg.content;
+            queueAI(async () => {
+                try {
+                    const reply = await getAIResponse(userTxt, getHistory(senderNum), getCustomerProfile(senderNum));
+                    if (!reply) return;
+                    const outKey = `${senderNum}:${reply.slice(0, 100)}`;
+                    recentApiReplies.set(`out:${outKey}`, Date.now());
+                    setTimeout(() => recentApiReplies.delete(`out:${outKey}`), 10000);
+                    await client.sendMessage(waId, reply);
+                    addToHistory(senderNum, 'assistant', reply);
+                    io.emit('conversation_updated');
+                    console.log(`[RESUME-REPLY] To ${senderNum}: ${reply.substring(0, 80)}...`);
+                } catch (e) { console.error('[ResumeReply]', e.message); }
+            });
+        }
+    } else if (target) {
+        pausedContacts.delete(target);
+    }
     io.emit('pause_changed', { globalPaused });
     res.json({ success: true });
 });
