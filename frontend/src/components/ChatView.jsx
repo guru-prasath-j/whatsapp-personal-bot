@@ -63,7 +63,7 @@ function Bubble({ role, content, ts, media, senderName }) {
 
         {/* Timestamp + Me inside sent bubble at top */}
         {isMe && fullTime && (
-          <span className="block text-white/50 text-[11px] mb-1.5">{fullTime} · Me</span>
+          <span className="block text-[11px] mb-1.5 opacity-60">{fullTime} · Me</span>
         )}
 
         {/* Inline image */}
@@ -90,7 +90,7 @@ function Bubble({ role, content, ts, media, senderName }) {
 
         {isMe && (
           <span className="block text-right mt-0.5">
-            <svg viewBox="0 0 18 18" className="inline-block w-3 h-3 fill-white/60">
+            <svg viewBox="0 0 18 18" className="inline-block w-3 h-3 opacity-60" style={{fill:'currentColor'}}>
               <path d="M17.394 5.035l-.57-.444a.434.434 0 00-.609.076L8.397 15.17l-4.572-3.918a.434.434 0 00-.609.076l-.444.57a.434.434 0 00.076.609l5.44 4.658a.434.434 0 00.609-.076L17.47 5.644a.434.434 0 00-.076-.609z"/>
             </svg>
           </span>
@@ -102,9 +102,9 @@ function Bubble({ role, content, ts, media, senderName }) {
 
 function SuggestionChip({ index, text, onSend, onLoad, busy }) {
   const [copied, setCopied] = useState(false)
-  const colors   = ['border-blue-400/50 hover:border-blue-400','border-wa-green/50 hover:border-wa-green','border-purple-400/50 hover:border-purple-400']
-  const labels   = ['text-blue-400','text-wa-green','text-purple-400']
-  const sendBtns = ['bg-blue-600 hover:bg-blue-500','bg-[#0E6655] hover:bg-[#17A589]','bg-purple-700 hover:bg-purple-600']
+  const colors   = ['border-wa-green/40 hover:border-wa-green','border-wa-green/60 hover:border-wa-green','border-wa-green/80 hover:border-wa-green']
+  const labels   = ['text-wa-green','text-wa-green','text-wa-green']
+  const sendBtns = ['bg-wa-green hover:opacity-80','bg-wa-green hover:opacity-80','bg-wa-green hover:opacity-80']
   const copy = async () => { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false),2000) }
   return (
     <div className={`bg-wa-card border border-l-2 rounded-xl p-3 flex flex-col gap-2 ${colors[index]}`}>

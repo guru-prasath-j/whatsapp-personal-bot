@@ -2,38 +2,164 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── CSS Theme Variables ─────────────────────────────────────────────────────
+   All UI colors live here. Components only use Tailwind classes (bg-wa-*, etc.)
+   which resolve to rgb(var(--c-*)), so swapping themes/accents is instant.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Dark theme (default) */
+  --c-bg:              11 20 26;
+  --c-sidebar:         17 27 33;
+  --c-header:          32 44 51;
+  --c-card:            42 57 66;
+  --c-input:           42 57 66;
+  --c-bubble-in:       31 44 52;
+  --c-bubble-out:      0 92 75;
+  --c-panel:           32 44 51;
+  --c-hover:           42 57 66;
+  --c-active:          61 84 101;
+  --c-text:            233 237 239;
+  --c-muted:           134 150 160;
+  --c-border:          42 57 66;
+  --c-bubble-hl:       29 49 65;
+
+  /* Accent — default WhatsApp green */
+  --c-accent:          0 168 132;
+  --c-accent-light:    37 211 102;
+  --c-accent-hex:      #00A884;
+
+  /* Wallpaper */
+  --wallpaper-bg:      #0B141A;
+  --wallpaper-pattern: %23182229;
+  --wallpaper-opacity: 0.6;
+
+  /* Scrollbar */
+  --c-scroll:          42 57 66;
+  --c-scroll-h:        61 84 101;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --c-bg:              240 242 245;
+  --c-sidebar:         255 255 255;
+  --c-header:          240 242 245;
+  --c-card:            255 255 255;
+  --c-input:           240 242 245;
+  --c-bubble-in:       255 255 255;
+  --c-panel:           255 255 255;
+  --c-hover:           245 246 246;
+  --c-active:          225 230 234;
+  --c-text:            17 27 33;
+  --c-muted:           102 119 129;
+  --c-border:          210 218 224;
+  --c-bubble-hl:       220 232 245;
+
+  --wallpaper-bg:      #EFE9DA;
+  --wallpaper-pattern: %23D4C9B8;
+  --wallpaper-opacity: 0.5;
+
+  --c-scroll:          200 210 218;
+  --c-scroll-h:        160 178 190;
+}
+
+/* ── Accent presets ──────────────────────────────────────────────────────── */
+
+/* Green (WhatsApp default) */
+[data-accent="green"] {
+  --c-accent:       0 168 132;
+  --c-accent-light: 37 211 102;
+  --c-accent-hex:   #00A884;
+  --c-bubble-out:   0 92 75;
+}
+[data-theme="light"][data-accent="green"] {
+  --c-bubble-out: 217 253 211;
+}
+
+/* Blue */
+[data-accent="blue"] {
+  --c-accent:       0 120 212;
+  --c-accent-light: 56 161 255;
+  --c-accent-hex:   #0078D4;
+  --c-bubble-out:   0 52 120;
+}
+[data-theme="light"][data-accent="blue"] {
+  --c-bubble-out: 219 234 254;
+}
+
+/* Purple */
+[data-accent="purple"] {
+  --c-accent:       124 58 237;
+  --c-accent-light: 167 139 250;
+  --c-accent-hex:   #7C3AED;
+  --c-bubble-out:   60 20 140;
+}
+[data-theme="light"][data-accent="purple"] {
+  --c-bubble-out: 237 233 254;
+}
+
+/* Orange */
+[data-accent="orange"] {
+  --c-accent:       234 88 12;
+  --c-accent-light: 251 146 60;
+  --c-accent-hex:   #EA580C;
+  --c-bubble-out:   124 45 18;
+}
+[data-theme="light"][data-accent="orange"] {
+  --c-bubble-out: 255 237 213;
+}
+
+/* Pink */
+[data-accent="pink"] {
+  --c-accent:       236 72 153;
+  --c-accent-light: 249 168 212;
+  --c-accent-hex:   #EC4899;
+  --c-bubble-out:   131 24 67;
+}
+[data-theme="light"][data-accent="pink"] {
+  --c-bubble-out: 252 231 243;
+}
+
+/* ── Base reset ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root { height: 100%; overflow: hidden; }
 
 body {
-  background: #0B141A;
-  color: #E9EDEF;
+  background: rgb(var(--c-bg));
+  color: rgb(var(--c-text));
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  transition: background 0.2s, color 0.2s;
 }
 
-/* ── Scrollbar ── */
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar        { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track  { background: transparent; }
-::-webkit-scrollbar-thumb  { background: #2A3942; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #3D5465; }
+::-webkit-scrollbar-thumb  { background: rgb(var(--c-scroll)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-scroll-h)); }
 
 textarea, input { font-family: inherit; }
 textarea:focus, input:focus { outline: none; }
 
-/* ── WhatsApp chat wallpaper ── */
+/* ── Chat wallpaper ────────────────────────────────────────────────────── */
 .chat-wallpaper {
-  background-color: #0B141A;
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23182229' fill-opacity='0.6'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-color: var(--wallpaper-bg);
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='var(--wallpaper-pattern)' fill-opacity='var(--wallpaper-opacity)'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
 }
 
-/* ── WhatsApp message bubbles with tail ── */
+/* Light wallpaper uses a different pattern colour */
+[data-theme="light"] .chat-wallpaper {
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23C5B8A8' fill-opacity='0.45'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ── Message bubble tails ─────────────────────────────────────────────── */
 .bubble-in {
   position: relative;
-  background: #1F2C34;
+  background: rgb(var(--c-bubble-in));
   border-radius: 0 8px 8px 8px;
+  transition: background 0.2s;
 }
 .bubble-in::before {
   content: '';
@@ -42,13 +168,14 @@ textarea:focus, input:focus { outline: none; }
   width: 0; height: 0;
   border-style: solid;
   border-width: 0 9px 9px 0;
-  border-color: transparent #1F2C34 transparent transparent;
+  border-color: transparent rgb(var(--c-bubble-in)) transparent transparent;
 }
 
 .bubble-out {
   position: relative;
-  background: #005C4B;
+  background: rgb(var(--c-bubble-out));
   border-radius: 8px 0 8px 8px;
+  transition: background 0.2s;
 }
 .bubble-out::before {
   content: '';
@@ -57,15 +184,16 @@ textarea:focus, input:focus { outline: none; }
   width: 0; height: 0;
   border-style: solid;
   border-width: 9px 9px 0 0;
-  border-color: #005C4B transparent transparent transparent;
+  border-color: rgb(var(--c-bubble-out)) transparent transparent transparent;
 }
 
-/* Incoming highlight (the message we're replying to) */
+/* Incoming highlight bubble */
 .bubble-incoming-highlight {
   position: relative;
-  background: #1D3141;
+  background: rgb(var(--c-bubble-hl));
   border-radius: 0 8px 8px 8px;
-  border-left: 3px solid #00A884;
+  border-left: 3px solid rgb(var(--c-accent));
+  transition: background 0.2s, border-color 0.2s;
 }
 .bubble-incoming-highlight::before {
   content: '';
@@ -74,5 +202,59 @@ textarea:focus, input:focus { outline: none; }
   width: 0; height: 0;
   border-style: solid;
   border-width: 0 9px 9px 0;
-  border-color: transparent #1D3141 transparent transparent;
+  border-color: transparent rgb(var(--c-bubble-hl)) transparent transparent;
 }
+
+/* ── Force CSS-variable colors on all Tailwind wa-* utility classes ─────────
+   Tailwind compiles wa-* colors to hardcoded hex at build time. These rules
+   (using "html" prefix for higher specificity) make every wa-* class read
+   from the CSS variables instead, so dark/light and accent changes apply
+   instantly without restarting the dev server or rebuilding.              */
+
+/* Backgrounds */
+html .bg-wa-bg          { background-color: rgb(var(--c-bg)); }
+html .bg-wa-sidebar     { background-color: rgb(var(--c-sidebar)); }
+html .bg-wa-header      { background-color: rgb(var(--c-header)); }
+html .bg-wa-card        { background-color: rgb(var(--c-card)); }
+html .bg-wa-input       { background-color: rgb(var(--c-input)); }
+html .bg-wa-panel       { background-color: rgb(var(--c-panel)); }
+html .bg-wa-hover       { background-color: rgb(var(--c-hover)); }
+html .bg-wa-active      { background-color: rgb(var(--c-active)); }
+html .bg-wa-green       { background-color: rgb(var(--c-accent)); }
+html .bg-wa-bubble-in   { background-color: rgb(var(--c-bubble-in)); }
+html .bg-wa-bubble-out  { background-color: rgb(var(--c-bubble-out)); }
+
+/* Backgrounds with opacity modifier (e.g. bg-wa-green/20) */
+html .bg-wa-green\/10   { background-color: rgb(var(--c-accent) / 0.10); }
+html .bg-wa-green\/20   { background-color: rgb(var(--c-accent) / 0.20); }
+html .bg-wa-green\/30   { background-color: rgb(var(--c-accent) / 0.30); }
+
+/* Hover backgrounds */
+html .hover\:bg-wa-card:hover    { background-color: rgb(var(--c-card)); }
+html .hover\:bg-wa-active:hover  { background-color: rgb(var(--c-active)); }
+html .hover\:bg-wa-green\/30:hover { background-color: rgb(var(--c-accent) / 0.30); }
+
+/* Text colors */
+html .text-wa-text         { color: rgb(var(--c-text)); }
+html .text-wa-muted        { color: rgb(var(--c-muted)); }
+html .text-wa-green        { color: rgb(var(--c-accent)); }
+html .text-wa-green-light  { color: rgb(var(--c-accent-light)); }
+html .text-wa-muted\/60    { color: rgb(var(--c-muted) / 0.60); }
+
+/* Hover text */
+html .hover\:text-wa-text:hover  { color: rgb(var(--c-text)); }
+html .hover\:text-wa-green:hover { color: rgb(var(--c-accent)); }
+
+/* Borders */
+html .border-wa-border      { border-color: rgb(var(--c-border)); }
+html .border-wa-green       { border-color: rgb(var(--c-accent)); }
+html .border-wa-border\/40  { border-color: rgb(var(--c-border) / 0.40); }
+html .border-wa-border\/50  { border-color: rgb(var(--c-border) / 0.50); }
+html .border-wa-green\/30   { border-color: rgb(var(--c-accent) / 0.30); }
+
+/* SVG fills */
+html .fill-wa-muted  { fill: rgb(var(--c-muted)); }
+html .fill-wa-green  { fill: rgb(var(--c-accent)); }
+
+/* Placeholder text */
+html .placeholder\:text-wa-muted::placeholder { color: rgb(var(--c-muted)); }

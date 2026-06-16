@@ -375,8 +375,8 @@ client.on('ready', async () => {
     io.emit('bot_status', { status: 'ready' });
     console.log(`\n✅ ${BOT_NAME} is LIVE — Dashboard: http://localhost:${PORT}\n`);
 
-    // Fix 3: pre-warm Ollama so model is loaded before first real message
-    warmupOllama();
+    // Pre-warm Ollama only when not using OpenAI so the model is ready before the first message
+    if (!process.env.OPENAI_API_KEY) warmupOllama();
 
     // Load ALL chats from WhatsApp (like WhatsApp Web does on startup)
     console.log('[Sync] Loading all chats from WhatsApp...');

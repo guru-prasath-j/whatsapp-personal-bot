@@ -1,4 +1,4 @@
-import { Wifi, WifiOff, PauseCircle, PlayCircle, User } from 'lucide-react'
+import { Wifi, WifiOff, PauseCircle, PlayCircle, User, Sun, Moon } from 'lucide-react'
 
 const STATUS = {
   connecting:    { text: 'Connecting…',    dot: 'bg-yellow-500' },
@@ -10,11 +10,19 @@ const STATUS = {
   auth_failed:   { text: 'Auth Failed',     dot: 'bg-red-500'    },
 }
 
-export default function StatusBar({ botStatus, connected, globalPaused, onTogglePause, onOpenProfile }) {
+const ACCENTS = [
+  { id: 'green',  label: 'Green',  hex: '#00A884' },
+  { id: 'blue',   label: 'Blue',   hex: '#0078D4' },
+  { id: 'purple', label: 'Purple', hex: '#7C3AED' },
+  { id: 'orange', label: 'Orange', hex: '#EA580C' },
+  { id: 'pink',   label: 'Pink',   hex: '#EC4899' },
+]
+
+export default function StatusBar({ botStatus, connected, globalPaused, onTogglePause, onOpenProfile, theme, accent, onToggleTheme, onSetAccent }) {
   const s = STATUS[botStatus] || STATUS.connecting
 
   return (
-    <header className="flex items-center justify-between px-4 py-2.5 bg-wa-header border-b border-black/30 flex-shrink-0 z-10">
+    <header className="flex items-center justify-between px-4 py-2.5 bg-wa-header border-b border-black/20 flex-shrink-0 z-10">
       {/* Left: Brand */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-wa-green flex items-center justify-center flex-shrink-0">
@@ -33,12 +41,42 @@ export default function StatusBar({ botStatus, connected, globalPaused, onToggle
 
       {/* Right: controls */}
       <div className="flex items-center gap-2">
+        {/* Accent color palette */}
+        <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-wa-card border border-wa-border">
+          {ACCENTS.map(a => (
+            <button
+              key={a.id}
+              onClick={() => onSetAccent(a.id)}
+              title={a.label}
+              className="w-4 h-4 rounded-full transition-transform hover:scale-125 focus:outline-none"
+              style={{
+                backgroundColor: a.hex,
+                boxShadow: accent === a.id ? `0 0 0 2px rgb(var(--c-header)), 0 0 0 3.5px ${a.hex}` : 'none',
+                transform: accent === a.id ? 'scale(1.15)' : undefined,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Dark / Light toggle */}
+        <button
+          onClick={onToggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+            bg-wa-card text-wa-muted border border-wa-border hover:text-wa-text hover:bg-wa-active transition-all">
+          {theme === 'dark'
+            ? <><Sun size={13} className="text-yellow-400" /> Light</>
+            : <><Moon size={13} className="text-wa-green" /> Dark</>}
+        </button>
+
+        {/* Connection indicator */}
         <div title={connected ? 'Dashboard live' : 'Not connected'}>
           {connected
             ? <Wifi size={16} className="text-wa-green" />
             : <WifiOff size={16} className="text-red-400" />}
         </div>
 
+        {/* Pause / Resume */}
         <button onClick={onTogglePause}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
             ${globalPaused
@@ -47,7 +85,7 @@ export default function StatusBar({ botStatus, connected, globalPaused, onToggle
           {globalPaused ? <><PlayCircle size={13} /> Resume Bot</> : <><PauseCircle size={13} /> Pause Bot</>}
         </button>
 
-        {/* Profile button */}
+        {/* Profile */}
         <button onClick={onOpenProfile}
           title="Business Profile & Settings"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium

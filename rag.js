@@ -36,11 +36,12 @@ function isNoDocsResponse(text) {
 
 function loadBusinessContext(question = '', maxChars = 15000) {
     const parts = [];
+    const loaded = [];
     try {
         // company_info.txt always first
         if (fs.existsSync(COMPANY_FILE)) {
             const c = fs.readFileSync(COMPANY_FILE, 'utf8').trim();
-            if (c) parts.push(c);
+            if (c) { parts.push(c); loaded.push('company_info.txt'); }
         }
         // Other txt files — pick relevant sections based on question keywords
         if (fs.existsSync(DOCS_DIR)) {
@@ -65,17 +66,26 @@ function loadBusinessContext(question = '', maxChars = 15000) {
                             }))
                             .sort((a, b) => b.score - a.score);
 
+                        const topScore = scored[0]?.score || 0;
                         // Take top 5 most relevant sections
                         const relevant = scored.slice(0, 5).map(s => s.text).join('\n\n');
                         parts.push(`--- ${file} ---\n${relevant}`);
+                        loaded.push(`${file} (keyword match, top score: ${topScore})`);
                     } else {
                         parts.push(`--- ${file} ---\n${content.substring(0, 8000)}`);
+                        loaded.push(`${file} (full, ${sections.length} sections)`);
                     }
                 } catch {}
             }
         }
     } catch {}
-    return parts.join('\n\n').substring(0, maxChars);
+    const result = parts.join('\n\n').substring(0, maxChars);
+    if (loaded.length > 0) {
+        console.log(`[Docs] Loaded for context: ${loaded.join(', ')} → ${result.length} chars`);
+    } else {
+        console.log('[Docs] No docs found — Ollama will answer from general knowledge only');
+    }
+    return result;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,6 +107,7 @@ async function askViaRagServer(question, history = [], customerProfile = {}) {
 
 async function askOllamaDirectly(question, history = []) {
     const businessInfo = loadBusinessContext(question, 8000); // keyword-relevant sections
+    console.log(`[Ollama] Answering based on: ${businessInfo ? `docs (${businessInfo.length} chars)` : 'general knowledge (no docs)'}`);
     const systemPrompt = businessInfo
         ? `You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail. Business information:\n${businessInfo}`
         : 'You are a WhatsApp assistant. Reply in 2-3 short sentences only — no lists, no markdown, no long explanations, even if asked to explain in detail.';
@@ -161,9 +172,9 @@ async function getChatGPTSuggestions(question, history = []) {
     const bizSnippet = businessInfo
         ? `\n\nBusiness Context (use ONLY this — do not add or invent anything not listed here):\n${businessInfo}`
         : '';
-    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
+    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. IMPORTANT: If any previous message in the conversation contradicts the Business Context, always follow the Business Context — it is the source of truth. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
     const userPrompt = ctx
-        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options:`
+        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options based ONLY on the Business Context above (ignore any wrong info in chat history):`
         : `Customer: ${question}\nWrite 3 reply options:`;
 
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
@@ -197,9 +208,14 @@ async function getAIResponse(question, history = [], customerProfile = {}) {
     } catch (ragErr) {
         console.log(`[RAG] Server unavailable (${ragErr.message}), falling back to LLM`);
         if (OPENAI_API_KEY) {
-            const answer = await askChatGPT(question, history);
-            console.log('[ChatGPT] Answered directly');
-            return answer;
+            try {
+                const answer = await askChatGPT(question, history);
+                console.log('[ChatGPT] Answered directly');
+                return answer;
+            } catch (openaiErr) {
+                const status = openaiErr.response?.status;
+                console.warn(`[ChatGPT] Failed (${status || openaiErr.message}), falling back to Ollama`);
+            }
         }
         const answer = await askOllamaDirectly(question, history);
         console.log('[Ollama] Answered directly');
@@ -224,9 +240,9 @@ async function getSuggestionsViaOllama(question, history = []) {
     const bizSnippet = businessInfo
         ? `\n\nBusiness Context (use ONLY this — do not add or invent anything not listed here):\n${businessInfo}`
         : '';
-    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. Do NOT invent features, capabilities, or facts not explicitly stated there. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
+    const systemPrompt = `You are a WhatsApp assistant. STRICT RULE: Base your replies ONLY on the Business Context provided. Do NOT invent features, capabilities, or facts not explicitly stated there. IMPORTANT: If any previous message in the conversation contradicts the Business Context, always follow the Business Context — it is the source of truth. Output ONLY this format: "1. [reply] 2. [reply] 3. [reply]" — each reply is one short sentence.${bizSnippet}`;
     const userPrompt   = ctx
-        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options:`
+        ? `${ctx}\nCustomer: ${question}\nWrite 3 reply options based ONLY on the Business Context above (ignore any wrong info in chat history):`
         : `Customer: ${question}\nWrite 3 reply options:`;
 
     const response = await axios.post(`${OLLAMA_BASE_URL}/api/chat`, {
@@ -277,9 +293,14 @@ async function getSuggestions(question, history = [], customerProfile = {}) {
     } catch (ragErr) {
         console.log(`[Suggestions] RAG server failed (${ragErr.message}), falling back to LLM`);
         if (OPENAI_API_KEY) {
-            const result = await getChatGPTSuggestions(question, history);
-            console.log('[Suggestions] Answered via ChatGPT');
-            return result;
+            try {
+                const result = await getChatGPTSuggestions(question, history);
+                console.log('[Suggestions] Answered via ChatGPT');
+                return result;
+            } catch (openaiErr) {
+                const status = openaiErr.response?.status;
+                console.warn(`[Suggestions] ChatGPT failed (${status || openaiErr.message}), falling back to Ollama`);
+            }
         }
         const result = await getSuggestionsViaOllama(question, history);
         console.log('[Suggestions] Answered via Ollama');

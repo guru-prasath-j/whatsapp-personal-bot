@@ -23,6 +23,20 @@ function App() {
   const [showProfile, setShowProfile]     = useState(false)
   const [toasts, setToasts]               = useState([])
   const [timeFilter, setTimeFilter]       = useState(null) // null = All
+  const [theme, setTheme]   = useState(() => localStorage.getItem('wa-theme')  || 'dark')
+  const [accent, setAccent] = useState(() => localStorage.getItem('wa-accent') || 'green')
+
+  // Apply theme + accent to <html> so all CSS variables update instantly
+  useEffect(() => {
+    const html = document.documentElement
+    html.dataset.theme  = theme
+    html.dataset.accent = accent
+    localStorage.setItem('wa-theme',  theme)
+    localStorage.setItem('wa-accent', accent)
+  }, [theme, accent])
+
+  const toggleTheme = useCallback(() =>
+    setTheme(t => t === 'dark' ? 'light' : 'dark'), [])
 
   const addToast = useCallback((message, type = 'success') => {
     const id = Date.now()
@@ -95,6 +109,10 @@ function App() {
         globalPaused={globalPaused}
         onTogglePause={handleGlobalPause}
         onOpenProfile={() => setShowProfile(true)}
+        theme={theme}
+        accent={accent}
+        onToggleTheme={toggleTheme}
+        onSetAccent={setAccent}
       />
 
       <div className="flex flex-1 overflow-hidden">
