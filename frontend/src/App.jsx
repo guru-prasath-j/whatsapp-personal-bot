@@ -121,7 +121,8 @@ function App() {
         <main className="flex-1 overflow-hidden">
           {filteredConv
             ? <ChatView conversation={filteredConv} onSend={handleSend}
-                timeFilterLabel={TIME_FILTERS.find(f => f.ms === timeFilter)?.label} />
+                timeFilterLabel={TIME_FILTERS.find(f => f.ms === timeFilter)?.label}
+                globalPaused={globalPaused} />
             : <EmptyState />}
         </main>
       </div>

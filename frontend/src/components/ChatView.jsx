@@ -128,7 +128,7 @@ function SuggestionChip({ index, text, onSend, onLoad, busy }) {
   )
 }
 
-export default function ChatView({ conversation, onSend, timeFilterLabel }) {
+export default function ChatView({ conversation, onSend, timeFilterLabel, globalPaused }) {
   const { name, messages=[], id, profilePic, realNumber } = conversation
   const [customText, setCustomText]       = useState('')
   const [suggestions, setSuggestions]     = useState([])
@@ -293,6 +293,12 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
             </div>
           )}
           {displayNumber && <p className="text-wa-muted text-[12px]">{displayNumber}</p>}
+          <div className="flex items-center gap-1 mt-0.5">
+            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${!globalPaused ? 'bg-wa-green animate-pulse' : 'bg-red-400'}`}/>
+            <span className={`text-[11px] font-medium ${!globalPaused ? 'text-wa-green' : 'text-red-400'}`}>
+              {!globalPaused ? 'Auto Reply Running' : 'Auto Reply Paused'}
+            </span>
+          </div>
           {chatFilter && (
             <p className="text-wa-green text-[11px] font-medium mt-0.5">
               Showing {visibleMessages.length} message{visibleMessages.length !== 1 ? 's' : ''} from last {activeFilter?.label}
@@ -343,9 +349,15 @@ export default function ChatView({ conversation, onSend, timeFilterLabel }) {
         <div className="w-[300px] flex-shrink-0 border-l border-black/30 bg-wa-sidebar flex flex-col overflow-hidden">
           <div className="px-4 py-3 bg-wa-header border-b border-black/20">
             <h3 className="text-wa-text font-semibold text-[13px] uppercase tracking-widest">AI Suggestions</h3>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${!globalPaused ? 'bg-wa-green animate-pulse' : 'bg-red-400'}`}/>
+              <span className={`text-[11px] font-medium ${!globalPaused ? 'text-wa-green' : 'text-red-400'}`}>
+                {!globalPaused ? 'Auto Reply Running' : 'Auto Reply Paused'}
+              </span>
+            </div>
             {lastIncoming && <p className="text-wa-muted text-[11px] mt-1 truncate">Re: "{lastIncoming.content?.substring(0,40)}…"</p>}
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+          <div className={`flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 transition-all duration-300 ${!globalPaused ? 'opacity-30 blur-sm pointer-events-none select-none' : ''}`}>
             <button onClick={() => fetchSuggestions(true)} disabled={loadingSugg||sending}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-wa-green hover:bg-wa-green-light text-white font-semibold text-[13px] transition-all disabled:opacity-50 shadow-lg shadow-wa-green/20">
               <RefreshCw size={14} className={loadingSugg?'animate-spin':''}/> {loadingSugg?'Generating…':'Get 3 suggestions'}
