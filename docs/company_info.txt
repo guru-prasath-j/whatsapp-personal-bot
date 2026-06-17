@@ -2,6 +2,16 @@ Company: Portfolio Simulator
 Industry: Financial Technology (FinTech) / Investment Analysis
 Location: Chennai, India
 
+Contact:
+Phone: 9344099154
+WhatsApp: 9344099154
+Email: usergithub02@gmail.com
+
+Additional Context:
+Company: Portfolio Simulator
+Industry: Financial Technology (FinTech) / Investment Analysis
+Location: Chennai, India
+
 About:
 Portfolio simulator is a web-based investment analysis platform that helps users compare and evaluate different investments strategies. User can simulate Lumpsum, SIP, SWP, Net Worth tracking , Gold comparison, FX conversion, and Cross-market portfolio performance using historical market data. The platform provides detailed charts, return analysis , and XIRR calculations for better investment decision-making.
 
