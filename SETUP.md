@@ -26,18 +26,18 @@ ollama pull nomic-embed-text
 
 ## Step 1 — Install Everything
 
-Open PowerShell and run this single command:
+Open PowerShell **inside the project folder** and run:
 
 ```powershell
-cd E:\Whatsapp-ai-dashboard\whatsapp-personal-bot; if (!(Test-Path .env)) { Copy-Item .env.example .env }; npm run setup; cd whatsapp-brain; if (!(Test-Path .env)) { Copy-Item .env.example .env }; pip install -r requirements.txt; cd ..
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
 When you run this, it will:
 
-1. Create `.env` file for the bot (copied from `.env.example`)
-2. Install all bot dependencies
-3. Build the frontend dashboard
-4. Create `.env` file for the brain (copied from `.env.example`)
+1. Create `.env` from `.env.example` (bot config — all values auto-filled)
+2. Create `whatsapp-brain/.env` from `whatsapp-brain/.env.example` (brain config — all values auto-filled)
+3. Install all Node dependencies
+4. Build the frontend dashboard
 5. Install all Python dependencies for the brain
 
 > `.env` files are only created if they don't already exist — your existing config will never be overwritten.
