@@ -1,60 +1,53 @@
 # WhatsApp AI Dashboard — One-click setup
-# Run: .\setup.ps1
+# Run: powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
-$Root = $PSScriptRoot
+# Always work from the folder this script lives in
+Set-Location (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 Write-Host ""
 Write-Host "=== WhatsApp AI Dashboard Setup ===" -ForegroundColor Cyan
 Write-Host ""
 
 # ── 1. Root .env ──────────────────────────────────────────────────────────────
-$rootEnv     = Join-Path $Root ".env"
-$rootExample = Join-Path $Root ".env.example"
-
-if (Test-Path $rootEnv) {
+if (Test-Path ".env") {
     Write-Host "[.env]        already exists — skipping" -ForegroundColor Yellow
 } else {
-    Copy-Item $rootExample $rootEnv
+    Copy-Item ".env.example" ".env"
     Write-Host "[.env]        created from .env.example" -ForegroundColor Green
 }
 
 # ── 2. whatsapp-brain .env ────────────────────────────────────────────────────
-$brainEnv     = Join-Path $Root "whatsapp-brain\.env"
-$brainExample = Join-Path $Root "whatsapp-brain\.env.example"
-
-if (Test-Path $brainEnv) {
+if (Test-Path "whatsapp-brain\.env") {
     Write-Host "[brain/.env]  already exists — skipping" -ForegroundColor Yellow
 } else {
-    Copy-Item $brainExample $brainEnv
+    Copy-Item "whatsapp-brain\.env.example" "whatsapp-brain\.env"
     Write-Host "[brain/.env]  created from whatsapp-brain/.env.example" -ForegroundColor Green
 }
 
 Write-Host ""
 
-# ── 3. Node dependencies (root) ───────────────────────────────────────────────
-Write-Host "Installing Node dependencies..." -ForegroundColor Cyan
-Set-Location $Root
+# ── 3. Node dependencies (root / bot) ────────────────────────────────────────
+Write-Host "Installing bot Node dependencies..." -ForegroundColor Cyan
 npm install
 if ($LASTEXITCODE -ne 0) { Write-Host "npm install failed" -ForegroundColor Red; exit 1 }
 
-# ── 4. Frontend build ─────────────────────────────────────────────────────────
+# ── 4. Frontend install + build ───────────────────────────────────────────────
 Write-Host ""
-Write-Host "Building frontend..." -ForegroundColor Cyan
-Set-Location (Join-Path $Root "frontend")
+Write-Host "Installing frontend dependencies and building..." -ForegroundColor Cyan
+Set-Location "frontend"
 npm install
 if ($LASTEXITCODE -ne 0) { Write-Host "frontend npm install failed" -ForegroundColor Red; exit 1 }
 npm run build
 if ($LASTEXITCODE -ne 0) { Write-Host "frontend build failed" -ForegroundColor Red; exit 1 }
+Set-Location ".."
 
-# ── 5. Python dependencies ────────────────────────────────────────────────────
+# ── 5. Python dependencies (brain) ───────────────────────────────────────────
 Write-Host ""
-Write-Host "Installing Python dependencies..." -ForegroundColor Cyan
-Set-Location $Root
-pip install -r (Join-Path $Root "whatsapp-brain\requirements.txt")
+Write-Host "Installing brain Python dependencies..." -ForegroundColor Cyan
+pip install -r "whatsapp-brain\requirements.txt"
 if ($LASTEXITCODE -ne 0) { Write-Host "pip install failed" -ForegroundColor Red; exit 1 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────
-Set-Location $Root
 Write-Host ""
 Write-Host "=== Setup complete! ===" -ForegroundColor Green
 Write-Host ""
